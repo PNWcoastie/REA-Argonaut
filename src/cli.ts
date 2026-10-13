@@ -1,3 +1,7 @@
+#!/usr/bin/env node
+
+import { realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { registerCaptureCommands } from "./cli/captureCommands.js";
 import { registerSignalCommands } from "./cli/signalCommands.js";
 import { registerWasmCommands } from "./cli/wasmCommands.js";
@@ -49,9 +53,15 @@ import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
 import type { CliInstance } from "./cli/types.js";
 import {
+  createCliResultOutput,
   streamCliCommandResults,
   type CliResultOutput,
 } from "./cli/cliResultOutput.js";
+import {
+  renderCliOutputArgumentError,
+  renderEmptyFilteredCliOutput,
+  validateCliOutputArguments,
+} from "./cliOutput.js";
 
 /** Describe CLI settings that are invalid before any command runs, as MCP does. */
 export const cliConfigurationError = (
@@ -141,3 +151,49 @@ export const createCli = (
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
   return cli;
 };
+
+/** Execute the CLI entrypoint when invoked directly via `argonaut` or `node dist/cli.js`. */
+export const runCliEntrypoint = async (
+  args: readonly string[] = process.argv.slice(2),
+): Promise<void> => {
+  if (args.length === 1 && (args[0] === "--mcp" || args[0] === "mcp")) {
+    const { runEntrypoint } = await import("./main.js");
+    await runEntrypoint();
+    return;
+  }
+  const outputArguments = validateCliOutputArguments(args);
+  const configurationError = cliConfigurationError(process.env);
+  if (configurationError !== undefined) {
+    process.stderr.write(`${configurationError}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!outputArguments.ok) {
+    process.stdout.write(renderCliOutputArgumentError(outputArguments));
+    process.exitCode = 1;
+    return;
+  }
+  let wroteOutput = false;
+  const resultOutput = createCliResultOutput(args, process.stdout);
+  await createCli(process.env, resultOutput).serve([...args], {
+    stdout: (output) => {
+      if (resultOutput?.handled) {
+        if (resultOutput.failed) process.stderr.write(output);
+        return;
+      }
+      if (output.length > 0) wroteOutput = true;
+      process.stdout.write(output);
+    },
+  });
+  if (!wroteOutput && !resultOutput?.handled) {
+    process.stdout.write(renderEmptyFilteredCliOutput(args) ?? "");
+  }
+};
+
+const entryPath = process.argv[1];
+if (
+  entryPath !== undefined &&
+  pathToFileURL(realpathSync(entryPath)).href === import.meta.url
+) {
+  void runCliEntrypoint();
+}

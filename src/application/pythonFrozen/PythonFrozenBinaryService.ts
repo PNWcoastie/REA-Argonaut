@@ -68,7 +68,17 @@ export class PythonFrozenBinaryService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: {
+            path: input.data.path,
+            max_toc_entries: input.data.max_toc_entries,
+            max_code_objects: input.data.max_code_objects,
+            ...(input.data.max_entries !== undefined
+              ? { max_entries: input.data.max_entries }
+              : {}),
+            ...(input.data.max_strings !== undefined
+              ? { max_strings: input.data.max_strings }
+              : {}),
+          },
           result: value,
           confidence: "observed",
           limitations: value.limitations,

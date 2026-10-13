@@ -1302,77 +1302,85 @@ function scanCppForensics(
     }
   }
 
-  // Second, binary scan for Itanium RTTI in stripped binaries:
+  // Second, binary scan for Itanium RTTI in stripped ELF/Mach-O binaries:
   // In Itanium ABI, a `_ZTI` struct in `.data.rel.ro` / `.rodata` has:
   //   [0]: vtable pointer (`__class_type_info` or `__si_class_type_info`)
   //   [ptrSize]: pointer to `_ZTS` null-terminated string (e.g. "13ThermalSensor\0")
   //   [ptrSize*2]: optional pointer to base `_ZTI`
   const dataSections = container.sections.filter((s) => !s.isExecutable);
-  for (const sec of dataSections) {
-    const end = Math.min(buf.length - ptrSize * 2, sec.offset + sec.size - ptrSize * 2);
-    for (let off = sec.offset; off <= end; off += ptrSize) {
-      const namePtr = readUIntPtr(
-        buf,
-        off + ptrSize,
-        container.bits,
-        container.littleEndian,
+  if (container.format !== "pe") {
+    for (const sec of dataSections) {
+      const end = Math.min(
+        buf.length - ptrSize * 2,
+        sec.offset + sec.size - ptrSize * 2,
       );
-      const nameOff = container.vaddrToFileOffset(namePtr);
-      if (nameOff === null || nameOff <= 0 || nameOff >= buf.length - 3) {
-        continue;
-      }
-      // Check if previous byte is null (start of C string) and starts with digits + identifier
-      if (nameOff > 0 && buf[nameOff - 1] !== 0) continue;
-      const rawZts = readNullTerminatedAscii(buf, nameOff, 128);
-      if (!/^(?:N?\d+[A-Za-z_][A-Za-z0-9_]*)+E?$/.test(rawZts)) continue;
-      const className = extractClassNameFromZts(rawZts);
-      if (
-        !className ||
-        className.includes("cxxabiv1") ||
-        className.includes("type_info")
-      ) {
-        continue;
-      }
-      const ztiVaddr = container.fileOffsetToVaddr(off);
-      if (ztiVaddr === null) continue;
-      let baseZtiVaddr: bigint | null = null;
-      if (off + ptrSize * 3 <= buf.length) {
-        const candidateBase = readUIntPtr(
+      for (let off = sec.offset; off <= end; off += ptrSize) {
+        const namePtr = readUIntPtr(
           buf,
-          off + ptrSize * 2,
+          off + ptrSize,
           container.bits,
           container.littleEndian,
         );
-        if (container.vaddrToFileOffset(candidateBase) !== null) {
-          baseZtiVaddr = candidateBase;
+        const nameOff = container.vaddrToFileOffset(namePtr);
+        if (nameOff === null || nameOff <= 0 || nameOff >= buf.length - 3) {
+          continue;
         }
-      }
-      const existing = typeinfoByClass.get(className);
-      if (!existing) {
-        const info: DiscoveredTypeinfo = {
-          className,
-          mangledZti: `_ZTI${rawZts}`,
-          ztsFileOffset: nameOff,
-          ztsVaddr: namePtr,
-          ztiVaddr,
-          ztiFileOffset: off,
-          baseZtiVaddr,
-        };
-        typeinfoByClass.set(className, info);
-        typeinfoByZtiVaddr.set(ztiVaddr, info);
-      } else if (existing.ztiVaddr === null || existing.ztiVaddr === 0n) {
-        existing.ztiVaddr = ztiVaddr;
-        existing.ztiFileOffset = off;
-        existing.baseZtiVaddr = baseZtiVaddr;
-        typeinfoByZtiVaddr.set(ztiVaddr, existing);
+        // Check if previous byte is null (start of C string) and starts with digits + identifier
+        if (nameOff > 0 && buf[nameOff - 1] !== 0) continue;
+        const rawZts = readNullTerminatedAscii(buf, nameOff, 128);
+        if (!/^(?:N?\d+[A-Za-z_][A-Za-z0-9_]*)+E?$/.test(rawZts)) continue;
+        const className = extractClassNameFromZts(rawZts);
+        if (
+          !className ||
+          className.includes("cxxabiv1") ||
+          className.includes("type_info")
+        ) {
+          continue;
+        }
+        const ztiVaddr = container.fileOffsetToVaddr(off);
+        if (ztiVaddr === null) continue;
+        let baseZtiVaddr: bigint | null = null;
+        if (off + ptrSize * 3 <= buf.length) {
+          const candidateBase = readUIntPtr(
+            buf,
+            off + ptrSize * 2,
+            container.bits,
+            container.littleEndian,
+          );
+          if (container.vaddrToFileOffset(candidateBase) !== null) {
+            baseZtiVaddr = candidateBase;
+          }
+        }
+        const existing = typeinfoByClass.get(className);
+        if (!existing) {
+          const info: DiscoveredTypeinfo = {
+            className,
+            mangledZti: `_ZTI${rawZts}`,
+            ztsFileOffset: nameOff,
+            ztsVaddr: namePtr,
+            ztiVaddr,
+            ztiFileOffset: off,
+            baseZtiVaddr,
+          };
+          typeinfoByClass.set(className, info);
+          typeinfoByZtiVaddr.set(ztiVaddr, info);
+        } else if (existing.ztiVaddr === null || existing.ztiVaddr === 0n) {
+          existing.ztiVaddr = ztiVaddr;
+          existing.ztiFileOffset = off;
+          existing.baseZtiVaddr = baseZtiVaddr;
+          typeinfoByZtiVaddr.set(ztiVaddr, existing);
+        }
       }
     }
   }
 
   // Helper to read virtual method slots from a vtable file offset (starting at first virtual function pointer)
-  const readVtableMethods = (fnStartOffset: number): CppClassRecord["virtual_methods"] => {
+  const readVtableMethods = (
+    fnStartOffset: number,
+    maxSlots = 32,
+  ): CppClassRecord["virtual_methods"] => {
     const methods: CppClassRecord["virtual_methods"] = [];
-    for (let slot = 0; slot < 32; slot++) {
+    for (let slot = 0; slot < maxSlots; slot++) {
       const slotOff = fnStartOffset + slot * ptrSize;
       if (slotOff + ptrSize > buf.length) break;
       const fnPtr = readUIntPtr(
@@ -1405,7 +1413,7 @@ function scanCppForensics(
     return methods;
   };
 
-  // Match vtables to discovered typeinfos
+  // Match vtables to discovered Itanium typeinfos
   for (const [className, info] of typeinfoByClass.entries()) {
     const baseClasses: string[] = [];
     if (info.baseZtiVaddr !== null) {
@@ -1474,37 +1482,238 @@ function scanCppForensics(
   }
 
   // 2. Scan MSVC RTTI TypeDescriptor strings (.?AVClassName@@ or .?AUStructName@@)
+  // and reconstruct RTTICompleteObjectLocator -> ClassHierarchyDescriptor -> VTable
+  interface MsvcTypeDesc {
+    className: string;
+    mangled: string;
+    tdFileOffset: number;
+    tdVaddr: bigint | null;
+    baseClasses: string[];
+    vtableVaddr: bigint | null;
+    virtualMethods: CppClassRecord["virtual_methods"];
+    hasPrimaryCol: boolean;
+  }
+
+  const msvcByClass = new Map<string, MsvcTypeDesc>();
+  const tdByKey = new Map<number, MsvcTypeDesc>();
+  const nameOffsetInTd = container.bits === 64 ? 16 : 8;
+
   const textLatin1 = buf.toString("latin1");
-  const msvcRegex = /\.\?A[VU]([A-Za-z_][A-Za-z0-9_@ Make]*)@@/g;
+  const msvcRegex = /\.\?A[VU]([A-Za-z_][A-Za-z0-9_@]*)@@/g;
   let msvcMatch: RegExpExecArray | null;
   while ((msvcMatch = msvcRegex.exec(textLatin1)) !== null) {
     const rawParts = msvcMatch[1]!.split("@").filter(Boolean).reverse();
     const className = rawParts.join("::");
-    if (className && !classMap.has(className)) {
+    if (!className) continue;
+
+    const nameFileOffset = msvcMatch.index;
+    const tdFileOffset = nameFileOffset - nameOffsetInTd;
+    const tdVaddr =
+      tdFileOffset >= 0 ? container.fileOffsetToVaddr(tdFileOffset) : null;
+
+    let desc = msvcByClass.get(className);
+    if (!desc) {
+      desc = {
+        className,
+        mangled: msvcMatch[0],
+        tdFileOffset,
+        tdVaddr,
+        baseClasses: [],
+        vtableVaddr: null,
+        virtualMethods: [],
+        hasPrimaryCol: false,
+      };
+      msvcByClass.set(className, desc);
+    }
+
+    if (tdVaddr !== null && tdVaddr > 0n) {
+      // Index by both 32-bit VA (used in PE32) and 32-bit RVA (used in PE32+)
+      const va32 = Number(BigInt.asUintN(32, tdVaddr));
+      tdByKey.set(va32, desc);
+      if (tdVaddr >= container.imageBase) {
+        const rva = Number(tdVaddr - container.imageBase);
+        if (rva > 0) {
+          tdByKey.set(rva, desc);
+        }
+      }
+    }
+  }
+
+  if (tdByKey.size > 0 && dataSections.length > 0) {
+    const resolveMsvcPtrOrRva = (val: number): number | null => {
+      if (val <= 0) return null;
+      if (container.bits === 64) {
+        const fromRva = container.vaddrToFileOffset(
+          container.imageBase + BigInt(val),
+        );
+        if (fromRva !== null) return fromRva;
+      }
+      return container.vaddrToFileOffset(BigInt(val));
+    };
+
+    const colVaddrMap = new Map<
+      bigint,
+      { desc: MsvcTypeDesc; isPrimary: boolean }
+    >();
+
+    // Pass 1 over dataSections: locate RTTICompleteObjectLocator (COL) structs
+    for (const sec of dataSections) {
+      const colSize = container.bits === 64 ? 24 : 20;
+      const end = Math.min(
+        buf.length - colSize,
+        sec.offset + sec.size - colSize,
+      );
+      for (let off = sec.offset; off <= end; off += 4) {
+        const pTypeDesc = buf.readUInt32LE(off + 12);
+        const desc = tdByKey.get(pTypeDesc);
+        if (!desc) continue;
+
+        const signature = buf.readUInt32LE(off);
+        if (signature !== 0 && signature !== 1) continue;
+        const vtableOffsetInClass = buf.readUInt32LE(off + 4);
+        const cdOffset = buf.readUInt32LE(off + 8);
+        if (vtableOffsetInClass >= 0x100000 || cdOffset >= 0x100000) continue;
+
+        const pClassDesc = buf.readUInt32LE(off + 16);
+        const chdFileOff = resolveMsvcPtrOrRva(pClassDesc);
+        if (
+          chdFileOff === null ||
+          chdFileOff < 0 ||
+          chdFileOff + 16 > buf.length
+        ) {
+          continue;
+        }
+
+        const chdSig = buf.readUInt32LE(chdFileOff);
+        const numBaseClasses = buf.readUInt32LE(chdFileOff + 8);
+        const pBaseClassArray = buf.readUInt32LE(chdFileOff + 12);
+        if (chdSig !== 0 || numBaseClasses < 1 || numBaseClasses > 64) {
+          continue;
+        }
+
+        const bcaFileOff = resolveMsvcPtrOrRva(pBaseClassArray);
+        if (
+          bcaFileOff !== null &&
+          bcaFileOff >= 0 &&
+          bcaFileOff + numBaseClasses * 4 <= buf.length &&
+          desc.baseClasses.length === 0
+        ) {
+          // Index 0 in BaseClassArray is the class itself; indices 1..numBaseClasses-1 are base classes
+          for (let b = 1; b < numBaseClasses; b++) {
+            const bcdPtr = buf.readUInt32LE(bcaFileOff + b * 4);
+            const bcdFileOff = resolveMsvcPtrOrRva(bcdPtr);
+            if (
+              bcdFileOff === null ||
+              bcdFileOff < 0 ||
+              bcdFileOff + 4 > buf.length
+            ) {
+              continue;
+            }
+            const baseTdPtr = buf.readUInt32LE(bcdFileOff);
+            const baseDesc = tdByKey.get(baseTdPtr);
+            if (
+              baseDesc &&
+              baseDesc.className !== desc.className &&
+              !desc.baseClasses.includes(baseDesc.className)
+            ) {
+              desc.baseClasses.push(baseDesc.className);
+            }
+          }
+        }
+
+        const colVaddr = container.fileOffsetToVaddr(off);
+        if (colVaddr !== null && colVaddr > 0n) {
+          colVaddrMap.set(colVaddr, {
+            desc,
+            isPrimary: vtableOffsetInClass === 0,
+          });
+        }
+      }
+    }
+
+    // Pass 2 over dataSections: locate VTable meta-pointers (vtable[-1] == colVaddr)
+    if (colVaddrMap.size > 0) {
+      for (const sec of dataSections) {
+        const end = Math.min(
+          buf.length - ptrSize * 2,
+          sec.offset + sec.size - ptrSize * 2,
+        );
+        for (let off = sec.offset; off <= end; off += 4) {
+          const candidateColPtr = readUIntPtr(
+            buf,
+            off,
+            container.bits,
+            container.littleEndian,
+          );
+          const hit = colVaddrMap.get(candidateColPtr);
+          if (!hit) continue;
+          if (hit.desc.hasPrimaryCol && !hit.isPrimary) continue;
+
+          const vtableFileOff = off + ptrSize;
+          const methods = readVtableMethods(vtableFileOff, 16);
+          if (methods.length > 0) {
+            const vtableVaddr = container.fileOffsetToVaddr(vtableFileOff);
+            if (
+              vtableVaddr !== null &&
+              (hit.desc.vtableVaddr === null || hit.isPrimary)
+            ) {
+              hit.desc.vtableVaddr = vtableVaddr;
+              hit.desc.virtualMethods = methods;
+              if (hit.isPrimary) {
+                hit.desc.hasPrimaryCol = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const [className, desc] of msvcByClass.entries()) {
+    if (!classMap.has(className)) {
       classMap.set(className, {
         class_name: className,
-        mangled_typeinfo: msvcMatch[0],
-        base_classes: [],
-        vtable_address: null,
-        virtual_methods: [],
+        mangled_typeinfo: desc.mangled,
+        base_classes: desc.baseClasses,
+        vtable_address:
+          desc.vtableVaddr !== null ? formatHexAddress(desc.vtableVaddr) : null,
+        virtual_methods: desc.virtualMethods,
       });
     }
   }
 
   const classes = [...classMap.values()];
-  const hasMsvc =
-    classes.some((c) => c.mangled_typeinfo?.startsWith(".?A") === true) ||
-    demangledSymbols.some((s) => s.encoding === "msvc-cpp");
-  const hasItanium =
-    classes.some((c) => c.mangled_typeinfo?.startsWith("_ZTI") === true) ||
-    demangledSymbols.some((s) => s.encoding === "itanium-cpp") ||
-    container.symbols.some((s) => s.name.includes("__gxx_personality") || s.name.includes("__cxa_"));
+  const itaniumClassCount = classes.filter(
+    (c) => c.mangled_typeinfo?.startsWith("_ZTI") === true,
+  ).length;
+  const msvcClassCount = classes.filter(
+    (c) => c.mangled_typeinfo?.startsWith(".?A") === true,
+  ).length;
+  const itaniumSymCount = demangledSymbols.filter(
+    (s) => s.encoding === "itanium-cpp",
+  ).length;
+  const msvcSymCount = demangledSymbols.filter(
+    (s) => s.encoding === "msvc-cpp",
+  ).length;
+  const hasItaniumPersonality = container.symbols.some(
+    (s) => s.name.includes("__gxx_personality") || s.name.includes("__cxa_"),
+  );
 
-  const abi: "itanium" | "msvc" | "none" = hasItanium
-    ? "itanium"
-    : hasMsvc
-      ? "msvc"
-      : "none";
+  let abi: "itanium" | "msvc" | "none" = "none";
+  if (
+    msvcClassCount > itaniumClassCount &&
+    msvcClassCount > itaniumSymCount
+  ) {
+    abi = "msvc";
+  } else if (
+    itaniumClassCount > 0 ||
+    itaniumSymCount > 0 ||
+    hasItaniumPersonality
+  ) {
+    abi = "itanium";
+  } else if (msvcClassCount > 0 || msvcSymCount > 0) {
+    abi = "msvc";
+  }
 
   return {
     detected: abi !== "none" || classes.length > 0 || demangledSymbols.length > 0,

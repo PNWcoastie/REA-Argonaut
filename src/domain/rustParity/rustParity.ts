@@ -21,8 +21,11 @@ export const rustParityScalarTypeSchema = z
     "f32",
     "f64",
     "bool",
+    "bytes",
   ])
-  .describe("Scalar C ABI type for FFI differential property testing.");
+  .describe(
+    "Scalar or byte-slice ('bytes': (*const u8, usize) in C ABI <-> &[u8] in Safe Rust) type for FFI differential property testing.",
+  );
 
 export type RustParityScalarType = z.infer<typeof rustParityScalarTypeSchema>;
 
@@ -75,7 +78,7 @@ export const verifyRustParityInputSchema = z
       .min(1)
       .max(8)
       .describe(
-        "Ordered list of scalar C ABI parameter types accepted by both the C symbol and Rust function (1 to 8 arguments).",
+        "Ordered list of C ABI parameter types accepted by both the C symbol and Rust function (1 to 8 arguments; 'bytes' passes (*const u8, usize) to C and &[u8] to Rust).",
       ),
     return_type: rustParityScalarTypeSchema.describe(
       "Scalar C ABI return type produced by both the C symbol and Rust function.",
@@ -114,6 +117,19 @@ export const verifyRustParityInputSchema = z
       .default(20_000)
       .describe(
         "Hard wall-clock timeout in milliseconds for sandboxed execution (default 20000).",
+      ),
+    forbid_unsafe: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Whether to enforce #![forbid(unsafe_code)] at compile time on the candidate Rust module (default true; set to false only when intentionally testing candidate code that uses unsafe).",
+      ),
+    scaffold_output_dir: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional directory path where a standalone verified #![forbid(unsafe_code)] Cargo crate (Cargo.toml, src/lib.rs, tests/parity_regression.rs) and interactive RECONSTRUCTION_DASHBOARD.html will be scaffolded when status === 'verified_bit_exact'.",
       ),
     harness_mode: rustParityHarnessModeSchema,
   })
@@ -179,6 +195,61 @@ export type RustParityCounterexample = z.infer<
   typeof rustParityCounterexampleSchema
 >;
 
+export const rustParityMemorySafetySchema = z
+  .object({
+    forbid_unsafe_enforced: z
+      .boolean()
+      .describe(
+        "True when #![forbid(unsafe_code)] was enforced at compile time on the candidate Rust module.",
+      ),
+    candidate_unsafe_blocks: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe(
+        "Count of unsafe blocks or unsafe fn declarations found in the candidate Rust source (0 for 100% Safe Rust).",
+      ),
+  })
+  .strict();
+
+export type RustParityMemorySafety = z.infer<
+  typeof rustParityMemorySafetySchema
+>;
+
+export const rustParityBenchmarkTelemetrySchema = z
+  .object({
+    benchmark_iterations: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe("Number of in-process micro-benchmark iterations executed per implementation."),
+    c_oracle_total_ns: z
+      .number()
+      .nonnegative()
+      .describe("Total nanoseconds elapsed calling the compiled C symbol across benchmark_iterations."),
+    safe_rust_total_ns: z
+      .number()
+      .nonnegative()
+      .describe("Total nanoseconds elapsed calling the candidate Safe Rust function across benchmark_iterations."),
+    c_oracle_ns_per_call: z
+      .number()
+      .nonnegative()
+      .describe("Average nanoseconds per call for the C reference symbol."),
+    safe_rust_ns_per_call: z
+      .number()
+      .nonnegative()
+      .describe("Average nanoseconds per call for the Safe Rust implementation."),
+    speedup_vs_c_oracle: z
+      .number()
+      .nonnegative()
+      .describe("Speedup ratio of Safe Rust vs. C oracle (c_oracle_total_ns / safe_rust_total_ns)."),
+  })
+  .strict();
+
+export type RustParityBenchmarkTelemetry = z.infer<
+  typeof rustParityBenchmarkTelemetrySchema
+>;
+
 export const rustParitySandboxTelemetrySchema = z
   .object({
     os_platform: z
@@ -227,6 +298,35 @@ export type RustParitySandboxTelemetry = z.infer<
   typeof rustParitySandboxTelemetrySchema
 >;
 
+export const rustParityScaffoldedCrateSchema = z
+  .object({
+    output_dir: z
+      .string()
+      .min(1)
+      .describe("Absolute directory path of the scaffolded verified Safe Rust Cargo crate."),
+    cargo_toml_path: z
+      .string()
+      .min(1)
+      .describe("Absolute path to Cargo.toml."),
+    lib_rs_path: z
+      .string()
+      .min(1)
+      .describe("Absolute path to src/lib.rs."),
+    regression_test_path: z
+      .string()
+      .min(1)
+      .describe("Absolute path to tests/parity_regression.rs."),
+    dashboard_html_path: z
+      .string()
+      .min(1)
+      .describe("Absolute path to the interactive RECONSTRUCTION_DASHBOARD.html visual report."),
+  })
+  .strict();
+
+export type RustParityScaffoldedCrate = z.infer<
+  typeof rustParityScaffoldedCrateSchema
+>;
+
 export const rustParityReportSchema = z
   .object({
     status: z
@@ -248,7 +348,10 @@ export const rustParityReportSchema = z
     seed: z.number().int().nonnegative(),
     float_ulp_tolerance: z.number().int().nonnegative(),
     counterexample: rustParityCounterexampleSchema.nullable(),
+    memory_safety: rustParityMemorySafetySchema,
+    benchmark_telemetry: rustParityBenchmarkTelemetrySchema.nullable(),
     sandbox_telemetry: rustParitySandboxTelemetrySchema,
+    scaffolded_crate: rustParityScaffoldedCrateSchema.nullable().default(null),
   })
   .strict();
 

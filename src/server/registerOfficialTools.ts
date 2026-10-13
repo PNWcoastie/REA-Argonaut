@@ -60,9 +60,23 @@ const registerOfficialTool = (
         contract.name,
         context.mcpReq.signal,
         async (admittedAnalysis) => {
-          const arguments_ = jsonObjectSchema.parse(
+          const parsedArguments = jsonObjectSchema.parse(
             contract.inputSchema.parse(input),
           );
+          const arguments_ =
+            contract.name === "decompile_subgraph" &&
+            typeof parsedArguments.entry === "string"
+              ? (() => {
+                  const { entry, ...rest } = parsedArguments;
+                  return {
+                    ...rest,
+                    procedure:
+                      typeof rest.procedure === "string"
+                        ? rest.procedure
+                        : entry,
+                  };
+                })()
+              : parsedArguments;
           const progress = mcpProgressReporter(context);
           const result = await runOfficialOperation(
             admittedAnalysis,

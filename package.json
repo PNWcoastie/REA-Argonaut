@@ -45,6 +45,12 @@
   "files": [
     "dist",
     "bridge",
+    "scripts",
+    ".agents/plugins.json",
+    ".agents/skills",
+    "plugins",
+    "examples/argon-zerog-showcase",
+    "plugin.json",
     "third_party",
     "native/windows/build/manifest.json",
     "native/windows/build/rea-windows-x64.node",
@@ -59,6 +65,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:run": "vitest run",
+    "showcase": "node examples/argon-zerog-showcase/run-showcase.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint"

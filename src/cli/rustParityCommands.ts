@@ -65,6 +65,12 @@ export const registerRustParityCommands = (
         .max(1024)
         .default(0)
         .describe("Maximum allowed IEEE-754 ULP distance for f32/f64"),
+      forbidUnsafe: z
+        .boolean()
+        .default(true)
+        .describe(
+          "Enforce #![forbid(unsafe_code)] on candidate Rust code (default: true)",
+        ),
       timeoutMs: z
         .number()
         .int()
@@ -72,6 +78,13 @@ export const registerRustParityCommands = (
         .max(120_000)
         .default(20_000)
         .describe("Hard wall-clock timeout in milliseconds"),
+      scaffoldOutputDir: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Optional directory to scaffold a standalone verified Cargo crate and interactive RECONSTRUCTION_DASHBOARD.html",
+        ),
       harnessMode: z
         .enum(["native-rustc", "cargo-proptest"])
         .default("native-rustc")
@@ -98,7 +111,11 @@ export const registerRustParityCommands = (
               iterations: options.iterations,
               seed: options.seed,
               float_ulp_tolerance: options.floatUlpTolerance,
+              forbid_unsafe: options.forbidUnsafe,
               timeout_ms: options.timeoutMs,
+              ...(options.scaffoldOutputDir === undefined
+                ? {}
+                : { scaffold_output_dir: options.scaffoldOutputDir }),
               harness_mode: options.harnessMode,
             },
             { signal },

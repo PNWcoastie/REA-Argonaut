@@ -1,0 +1,109 @@
+{
+  "timestamp": "2026-10-13T19:04:40.775Z",
+  "target": {
+    "functions": [
+      "argon_authenticate_packet",
+      "argon_keystream_round",
+      "argon_tag_finalize",
+      "argon_rotl32"
+    ],
+    "subgraph_nodes_recovered": [
+      "argon_authenticate_packet",
+      "argon_keystream_round",
+      "argon_tag_finalize",
+      "argon_rotl32"
+    ],
+    "subgraph_edges_recovered": 4,
+    "total_latent_hazards": 4,
+    "latent_hazards": [
+      {
+        "procedure": "argon_keystream_round",
+        "category": "potential_integer_overflow_to_pointer",
+        "severity": "high",
+        "address": "0x1130",
+        "instruction_or_op": "0x1130: imul eax, eax, 0x85ebca6b",
+        "description": "32-bit integer multiplication/shift in a procedure with 64-bit sign-extension or pointer indexing can wrap before offset calculation; promote to usize/u64 and use checked_mul in Safe Rust."
+      },
+      {
+        "procedure": "argon_tag_finalize",
+        "category": "potential_integer_overflow_to_pointer",
+        "severity": "high",
+        "address": "0x1151",
+        "instruction_or_op": "0x1151: imul esi, esi, 0xc2b2ae35",
+        "description": "32-bit integer multiplication/shift in a procedure with 64-bit sign-extension or pointer indexing can wrap before offset calculation; promote to usize/u64 and use checked_mul in Safe Rust."
+      },
+      {
+        "procedure": "argon_tag_finalize",
+        "category": "unchecked_division",
+        "severity": "high",
+        "address": "0x1159",
+        "instruction_or_op": "0x1159: div edi",
+        "description": "Hardware division instruction without an adjacent zero-divisor check; use checked_div / checked_rem or explicit zero guards in Safe Rust."
+      },
+      {
+        "procedure": "argon_tag_finalize",
+        "category": "thread_hostile_mutable_global",
+        "severity": "medium",
+        "address": "0x1172",
+        "instruction_or_op": "0x1172: mov DWORD PTR [rip+0x2e94], eax",
+        "description": "Instruction mutates process-global state in a writable data/BSS section without synchronization; move state into an explicit context struct or Atomic/Mutex in Safe Rust."
+      }
+    ]
+  },
+  "comparison": {
+    "legacy_workflow": {
+      "mcp_tool_calls": 18,
+      "wall_time_ms": 189.56,
+      "wire_bytes": 74650,
+      "context_caching": "18 fragmented JSON turns (high KV-cache churn)"
+    },
+    "argon_zerog_subgraph": {
+      "mcp_tool_calls": 1,
+      "wall_time_ms": 11.41,
+      "wire_bytes": 16089,
+      "context_caching": "1 contiguous JSON block (100% single-turn KV-cache hit)"
+    },
+    "round_trip_reduction_pct": 94.4,
+    "latency_speedup_x": 16.61
+  },
+  "closed_loop_parity": {
+    "attempt_1_mutated_candidate": {
+      "status": "diverged",
+      "wall_time_ms": 1286.1,
+      "failing_iteration": 56,
+      "original_inputs": [
+        "4096",
+        "4096",
+        "4096"
+      ],
+      "shrunk_inputs": [
+        "1024",
+        "4096",
+        "2"
+      ],
+      "shrink_steps": 13,
+      "c_output_hex": "0xab1f5326",
+      "rust_output_hex": "0xab1f7326",
+      "bit_diff_summary": "XOR diff = 0x2000 (1 bit(s) differ, lowest bit = 13, highest bit = 13); C returned 0xab1f5326 (2870956838), Rust returned 0xab1f7326 (2870965030)"
+    },
+    "attempt_2_self_healed_candidate": {
+      "status": "verified_bit_exact",
+      "wall_time_ms": 564.87,
+      "iterations_completed": 10000,
+      "boundary_cases_tested": 64,
+      "isolation_backend": "linux-bwrap+prlimit",
+      "memory_safety": {
+        "forbid_unsafe_enforced": true,
+        "candidate_unsafe_blocks": 0
+      },
+      "benchmark_telemetry": {
+        "benchmark_iterations": 100000,
+        "c_oracle_total_ns": 1279236,
+        "safe_rust_total_ns": 529906,
+        "c_oracle_ns_per_call": 12.7924,
+        "safe_rust_ns_per_call": 5.2991,
+        "speedup_vs_c_oracle": 2.41
+      }
+    }
+  }
+}

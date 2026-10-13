@@ -190,6 +190,17 @@ export class GhidraClient {
             ),
           ),
       );
+    if (signal?.aborted === true) {
+      return Promise.resolve(
+        err(
+          this.#failure(
+            "cancelled",
+            "Ghidra startup wait cancelled by caller",
+            signal.reason,
+          ),
+        ),
+      );
+    }
     if (this.#startPromise !== undefined) {
       if (this.#startupController?.signal.aborted && !signal?.aborted)
         return this.#startPromise.then((result) =>
@@ -197,17 +208,15 @@ export class GhidraClient {
             ? result
             : this.start(signal),
         );
-      return this.#startPromise;
+      return signal === undefined
+        ? this.#startPromise
+        : this.#awaitStartupWithSignal(this.#startPromise, signal);
     }
     const controller = new AbortController();
-    const onAbort = (): void => controller.abort(signal?.reason);
-    if (signal?.aborted === true) onAbort();
-    else signal?.addEventListener("abort", onAbort, { once: true });
     const started = this.#start(controller.signal);
     this.#startupController = controller;
     this.#startPromise = started;
     const reset = (): void => {
-      signal?.removeEventListener("abort", onAbort);
       if (this.#startPromise === started) {
         this.#startPromise = undefined;
         if (this.#startupController === controller)
@@ -216,7 +225,6 @@ export class GhidraClient {
     };
     void started.then(
       (result) => {
-        signal?.removeEventListener("abort", onAbort);
         if (result.ok) this.#ready = true;
         else reset();
       },
@@ -228,7 +236,58 @@ export class GhidraClient {
         reset();
       },
     );
-    return started;
+    return signal === undefined
+      ? started
+      : this.#awaitStartupWithSignal(started, signal);
+  }
+
+  #awaitStartupWithSignal(
+    started: Promise<GhidraStartResult>,
+    signal: AbortSignal,
+  ): Promise<GhidraStartResult> {
+    if (signal.aborted) {
+      return Promise.resolve(
+        err(
+          this.#failure(
+            "cancelled",
+            "Ghidra startup wait cancelled by caller",
+            signal.reason,
+          ),
+        ),
+      );
+    }
+    return new Promise<GhidraStartResult>((resolve) => {
+      const onAbort = (): void => {
+        resolve(
+          err(
+            this.#failure(
+              "cancelled",
+              "Ghidra startup wait cancelled by caller",
+              signal.reason,
+            ),
+          ),
+        );
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      void started.then(
+        (result) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(result);
+        },
+        (cause: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(
+            err(
+              this.#failure(
+                "start",
+                "Ghidra startup failed unexpectedly",
+                cause,
+              ),
+            ),
+          );
+        },
+      );
+    });
   }
 
   async #reportStartupWait(

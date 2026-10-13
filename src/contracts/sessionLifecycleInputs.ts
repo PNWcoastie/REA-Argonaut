@@ -49,6 +49,11 @@ export const openBinaryInputSchema = z
         "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise.",
       ),
     provider_id: analysisProviderSelectorSchema.optional(),
+    provider: analysisProviderSelectorSchema
+      .optional()
+      .describe(
+        "Alias for provider_id: selects one deep provider ('ghidra', 'hopper', 'ida-mcp', 'zero-install') or 'auto'.",
+      ),
     snapshot_path: snapshotPathSchema.optional(),
   })
   .superRefine((value, context) => {
