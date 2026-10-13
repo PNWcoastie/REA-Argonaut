@@ -46,8 +46,6 @@ export const carriesTargetContentMarker = (result: {
 const TARGET_CONTENT_META_BYTES =
   Buffer.byteLength(JSON.stringify({ _meta: TARGET_CONTENT_RESULT_META })) - 1;
 
-export const MCP_TOOL_RESULT_CONTENT_MODE = "text-only" as const;
-
 /**
  * MCP representations a result carries on the wire. Successful results can
  * carry text-only (ArgonZeroG single-serialization mode) or structured-and-text.
@@ -56,6 +54,9 @@ export type ToolResultRepresentations =
   | "structured-and-text"
   | "text"
   | "text-only";
+
+export const MCP_TOOL_RESULT_CONTENT_MODE: ToolResultRepresentations =
+  "text-only";
 
 /** Result of encoding the complete repeated MCP representations within a wire budget. */
 export type ToolResultEncoding =

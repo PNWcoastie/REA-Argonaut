@@ -1,18 +1,6 @@
 import { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
-
+import { TsharkCaptureProvider } from "../captures/TsharkCaptureProvider.js";
 export const createPacketCaptureService = (
-  _environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): PacketCaptureService =>
-  new PacketCaptureService({
-    close: async () => {},
-    inspect: async () =>
-      err(
-        new AnalysisCapabilityUnavailableError(
-          "packet-capture",
-          "inspect_packet_capture",
-          "not_configured",
-        ),
-      ),
-  });
+  new PacketCaptureService(new TsharkCaptureProvider(environment));

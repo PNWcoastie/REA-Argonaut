@@ -1,23 +1,11 @@
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { PlaywrightBrowserScenarioProvider } from "../browser/PlaywrightBrowserScenarioProvider.js";
+import { PlaywrightScenarioSession } from "../browser/PlaywrightScenarioSession.js";
 
-/** Construct a stub browser scenario provider (stripped in REA-Argonaut). */
+/** Construct a fresh provider without opening a target or acquiring an engine. */
 export const createBrowserScenarioProvider = (
-  _environment: Readonly<Record<string, string | undefined>>,
-): BrowserScenarioCapturePort => ({
-  close: async () => {},
-  identity: () => ({
-    id: "playwright-browser-scenario",
-    name: "Playwright Browser Scenario",
-    version: "unavailable",
-  }),
-  captureScenario: async () =>
-    err(
-      new AnalysisCapabilityUnavailableError(
-        "browser-scenario",
-        "capture_browser_scenario",
-        "not_configured",
-      ),
-    ),
-});
+  environment: Readonly<Record<string, string | undefined>>,
+): BrowserScenarioCapturePort =>
+  new PlaywrightBrowserScenarioProvider((scenario, options) =>
+    PlaywrightScenarioSession.open(scenario, environment, options),
+  );

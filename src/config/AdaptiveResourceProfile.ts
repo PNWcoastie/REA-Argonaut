@@ -7,6 +7,8 @@ export interface AdaptiveResourceProfile {
   readonly totalMemBytes: number;
   /** Optimal worker concurrency scaled dynamically to host CPU cores. */
   readonly workerConcurrency: number;
+  /** Optimal parallel build/tool jobs scaled dynamically to host CPU cores. */
+  readonly maxCargoJobs: number;
   /** Maximum JavaScript/AST files analyzed per run, scaled to host memory. */
   readonly maxAnalyzedFiles: number;
   /** Maximum AST semantic nodes retained, scaled to host memory. */
@@ -38,6 +40,7 @@ export const resolveAdaptiveResourceProfile = (): AdaptiveResourceProfile => {
     logicalCores,
     totalMemBytes,
     workerConcurrency,
+    maxCargoJobs: workerConcurrency,
     maxAnalyzedFiles: Math.max(1024, 512 * memScale),
     maxSemanticNodes: Math.max(500_000, 250_000 * memScale),
     maxSourceFileBytes: Math.max(4 * 1024 * 1024, 2 * 1024 * 1024 * memScale),

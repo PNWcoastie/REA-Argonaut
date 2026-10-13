@@ -4,6 +4,7 @@ import {
   toolInputSchemaWithMetadata,
   toolOutputSchemaWithMetadata,
 } from "../contracts/toolSchemaMetadata.js";
+import { MCP_TOOL_RESULT_CONTENT_MODE } from "./toolResultEncoding.js";
 
 /** Preserve advertised contracts while the application owns structured input failures. */
 export const applicationValidatedInputSchema = (
@@ -23,12 +24,14 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   readonly title: Contract["title"];
   readonly description: Contract["description"];
   readonly inputSchema: Contract["inputSchema"];
-  readonly outputSchema: Contract["outputSchema"];
+  readonly outputSchema?: Contract["outputSchema"];
   readonly annotations: Contract["annotations"];
 } => ({
   title: contract.title,
   description: contract.description,
   inputSchema: toolInputSchemaWithMetadata(contract),
-  outputSchema: toolOutputSchemaWithMetadata(contract),
+  ...(MCP_TOOL_RESULT_CONTENT_MODE === "structured-and-text"
+    ? { outputSchema: toolOutputSchemaWithMetadata(contract) }
+    : {}),
   annotations: contract.annotations,
 });

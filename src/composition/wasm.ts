@@ -1,24 +1,12 @@
 import { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import { WabtArtifactProvider } from "../wasm/WabtArtifactProvider.js";
 import { INSPECT_WASM_ARTIFACT_CONTRACT } from "../contracts/wasm/wasmToolContracts.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
-
-/** Compose the caller-supplied offline toolchain stub (stripped in REA-Argonaut). */
+/** Compose the caller-supplied offline toolchain without acquisition or import-time I/O. */
 export const createWasmArtifactService = (
-  _environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): WasmArtifactService =>
-  new WasmArtifactService({
-    close: async () => {},
-    inspect: async () =>
-      err(
-        new AnalysisCapabilityUnavailableError(
-          "wasm-artifact",
-          "inspect_wasm_artifact",
-          "not_configured",
-        ),
-      ),
-  });
+  new WasmArtifactService(new WabtArtifactProvider(environment));
 
 /**
  * Internal static descriptor for one named domain operation and its lifetime.

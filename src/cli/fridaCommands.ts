@@ -8,13 +8,11 @@ import type {
   FridaInstrumentationPort,
   FridaRemoteConnection,
 } from "../application/frida/FridaInstrumentationPort.js";
+import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  AnalysisInputError,
-  AnalysisCapabilityUnavailableError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -26,39 +24,11 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
-const fridaDisabledError = (operation: string) =>
-  Promise.resolve(
-    err(
-      new AnalysisCapabilityUnavailableError(
-        "frida",
-        operation,
-        "not_configured",
-      ),
-    ),
-  );
-
-const unavailableFridaProvider: FridaInstrumentationPort = {
-  availabilityFailure: () => ({
-    providerId: "frida",
-    reason: "Frida instrumentation is disabled in REA-Argonaut.",
-    remediation: "Use native debuggers (LLDB/GDB/pwndbg) or static analysis.",
-  }),
-  listDevices: () => fridaDisabledError("list_frida_devices"),
-  listProcesses: () => fridaDisabledError("list_frida_processes"),
-  startSession: () => fridaDisabledError("start_frida_session"),
-  loadScript: () => fridaDisabledError("load_frida_script"),
-  resumeSession: () => fridaDisabledError("resume_frida_session"),
-  unloadScript: () => fridaDisabledError("unload_frida_script"),
-  status: () => undefined,
-  closeSession: () => fridaDisabledError("close_frida_session"),
-  closeAll: () => Promise.resolve(),
-};
-
 /** Register Frida discovery and one-shot instrumentation CLI operations. */
 export const registerFridaCommands = (
   cli: CliInstance,
   logger: Logger,
-  provider: FridaInstrumentationPort = unavailableFridaProvider,
+  provider: FridaInstrumentationPort = new FridaInstrumentationManager(),
 ): void => {
   const service = new FridaInstrumentationService(provider);
   // CLI calls own a disposable provider; MCP retains its shared provider until

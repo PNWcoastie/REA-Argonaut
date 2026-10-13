@@ -8,16 +8,22 @@ import {
 import { parseManagedMemberEvidence } from "../../domain/managed/managedMemberComparisonMatch.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { parseBinaryTarget } from "../BinaryTargetResolver.js";
+import {
+  classifyBinaryTargetFilesystemFailure,
+  parseBinaryTarget,
+} from "../BinaryTargetResolver.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
+import { inspectManagedMembersBytes } from "../../dotnet/ManagedMemberInspector.js";
+import { readManagedSnapshot } from "../../dotnet/ManagedSnapshot.js";
+import {
+  MANAGED_STATIC_PROVIDER,
+  MANAGED_WORKFLOW_PROVIDER,
+} from "../InvestigationProviders.js";
 import { workflowInputError } from "../workflowInputError.js";
 
 /** Compare managed members from input parsed by a trusted adapter. */
@@ -40,11 +46,7 @@ export const compareManagedMembersEvidenceValidated = (
 
 interface ManagedMemberComparisonPathDependencies {
   readonly resolveTarget: typeof parseBinaryTarget;
-  readonly readSnapshot?: (
-    path: string,
-    operation: string,
-    options?: { readonly resources?: ArtifactResourceScope },
-  ) => Promise<{ readonly bytes: Buffer; readonly sha256: string }>;
+  readonly readSnapshot: typeof readManagedSnapshot;
 }
 
 /** Inspect two local PE artifacts and return one derived comparison Evidence. */
@@ -53,17 +55,80 @@ export const compareManagedMemberPaths = async (
     readonly leftPath: string;
     readonly rightPath: string;
   },
-  _dependencies: Partial<ManagedMemberComparisonPathDependencies> = {},
-  _resources?: ArtifactResourceScope,
+  dependencies: Partial<ManagedMemberComparisonPathDependencies> = {},
+  resources?: ArtifactResourceScope,
 ): Promise<Result<Evidence, AnalysisError>> => {
-  void input;
-  return err(
-    new AnalysisCapabilityUnavailableError(
-      "managed-static",
-      "compare_managed_members",
-      "not_configured",
-    ),
-  );
+  const operation = "compare_managed_members";
+  const resolveTarget = dependencies.resolveTarget ?? parseBinaryTarget;
+  const readSnapshot = dependencies.readSnapshot ?? readManagedSnapshot;
+  let partialEvidence: Evidence | undefined;
+  try {
+    const [leftTarget, rightTarget] = await Promise.all([
+      resolveTarget(input.leftPath),
+      resolveTarget(input.rightPath),
+    ]);
+    // Report an unopenable path like every other path-based command does,
+    // with the failed path and constraint, rather than a bare input error.
+    if (!leftTarget.ok) return err(leftTarget.error);
+    if (!rightTarget.ok) return err(rightTarget.error);
+    const inspectTarget = async (
+      target: BinaryTarget,
+      selectedPath: string,
+    ) => {
+      const { path } = target;
+      let snapshot: Awaited<ReturnType<typeof readManagedSnapshot>>;
+      try {
+        snapshot = await readSnapshot(
+          path,
+          operation,
+          resources === undefined ? {} : { resources },
+        );
+      } catch (cause: unknown) {
+        const failure = classifyBinaryTargetFilesystemFailure(path, cause);
+        if (failure !== undefined) throw failure;
+        throw cause;
+      }
+      if (snapshot.sha256 !== target.sha256)
+        throw new EvidenceIntegrityError(
+          `Managed artifact digest changed after open: expected ${target.sha256}, observed ${snapshot.sha256} at ${target.path}`,
+        );
+      const inspection = inspectManagedMembersBytes(snapshot.bytes, target);
+      const evidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: jsonValueSchema.parse(inspection),
+        rawResult: null,
+        limitations: inspection.limitations,
+        locations: [{ kind: "artifact-path", path: selectedPath }],
+      });
+      return { inspection, evidence };
+    };
+    const left = await inspectTarget(leftTarget.value, input.leftPath);
+    partialEvidence = left.evidence;
+    const right = await inspectTarget(rightTarget.value, input.rightPath);
+    const result = compareManagedMembers(
+      {
+        evidenceId: left.evidence.evidence_id,
+        result: left.inspection,
+      },
+      {
+        evidenceId: right.evidence.evidence_id,
+        result: right.inspection,
+      },
+    );
+    return ok(
+      createManagedMemberComparisonEvidence(
+        {
+          left: left.evidence,
+          right: right.evidence,
+        },
+        result,
+        { leftPath: input.leftPath, rightPath: input.rightPath },
+      ),
+    );
+  } catch (cause: unknown) {
+    return workflowFailure(operation, cause, partialEvidence);
+  }
 };
 
 const createManagedMemberComparisonEvidence = (

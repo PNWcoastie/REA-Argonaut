@@ -13,16 +13,6 @@ type BoundOperation<Operation> = Operation extends (
   ? (...args: Arguments) => Result
   : never;
 
-const createManagedBinarySession = async () => {
-  const { AnalysisProviderRegistry } = await import(
-    "../application/binary/AnalysisProviderRegistry.js"
-  );
-  const { composeBinarySession } = await import(
-    "../application/binary/BinarySessionComposition.js"
-  );
-  return composeBinarySession(new AnalysisProviderRegistry([], "auto"), []);
-};
-
 /** Bind one-shot analysis and status commands to one caller-selected environment. */
 export const createDirectAnalysis = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
@@ -34,7 +24,10 @@ export const createDirectAnalysis = (
       const { createBinarySession } = await import("./binary.js");
       return createBinarySession(config, logger, environment);
     },
-    createManagedBinarySession,
+    createManagedBinarySession: async () => {
+      const { createManagedBinarySession } = await import("./binary.js");
+      return createManagedBinarySession();
+    },
   };
   const runDirectAnalysis: BoundOperation<
     DirectAnalysisRuntime["runDirectAnalysis"]
@@ -75,7 +68,10 @@ export const runManagedProviderExecution: BoundOperation<
     await import("../application/DirectAnalysis.js");
   return runManagedProviderExecution(
     {
-      createManagedBinarySession,
+      createManagedBinarySession: async () => {
+        const { createManagedBinarySession } = await import("./binary.js");
+        return createManagedBinarySession();
+      },
     },
     ...args,
   );

@@ -1,24 +1,13 @@
 import { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
+import { EvmoleInterfaceProvider } from "../evm/EvmoleInterfaceProvider.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { INSPECT_EVM_INTERFACE_CONTRACT } from "../contracts/evm/evmToolContracts.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
 
-/** Compose offline interface analysis stub (stripped in REA-Argonaut). */
+/** Compose offline interface analysis without import-time I/O or dependency acquisition. */
 export const createEvmInterfaceService = (
-  _environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): EvmInterfaceService =>
-  new EvmInterfaceService({
-    close: async () => {},
-    inspect: async () =>
-      err(
-        new AnalysisCapabilityUnavailableError(
-          "evm-interface",
-          "inspect_evm_interface",
-          "not_configured",
-        ),
-      ),
-  });
+  new EvmInterfaceService(new EvmoleInterfaceProvider(environment));
 
 /**
  * Static binding of the existing operation, command and fresh service factory.

@@ -1,22 +1,12 @@
 import { WebSourceLocationService } from "../application/WebSourceLocationService.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { LocalWebSourceLocationArtifacts } from "../browser/assets/WebSourceLocationArtifacts.js";
 import { SourceMapDecoder } from "../javascript/sourceMaps/SourceMapDecoder.js";
 
-/** Compose local source/map analysis without deleted browser assets. */
+/** Compose local source/map analysis without import-time reads or process acquisition. */
 export const createWebSourceLocationService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): WebSourceLocationService =>
   new WebSourceLocationService(
-    {
-      load: async () =>
-        err(
-          new AnalysisCapabilityUnavailableError(
-            "web-source-location",
-            "trace_web_source_location",
-            "not_configured",
-          ),
-        ),
-    },
+    new LocalWebSourceLocationArtifacts(),
     new SourceMapDecoder({ environment }),
   );
