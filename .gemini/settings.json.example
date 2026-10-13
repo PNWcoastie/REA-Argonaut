@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "rea-argonaut": {
+      "command": "npx",
+      "args": ["-y", "rea-argonaut"],
+      "env": {
+        "MCP_TOOL_RESULT_CONTENT_MODE": "text-only"
+      }
+    },
+    "rea-argonaut-local": {
+      "command": "node",
+      "args": ["dist/main.js"],
+      "env": {
+        "MCP_TOOL_RESULT_CONTENT_MODE": "text-only"
+      }
+    }
+  }
+}

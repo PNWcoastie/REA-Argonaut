@@ -1,0 +1,13 @@
+{
+  "name": "rea-argonaut",
+  "displayName": "REA-Argonaut (ArgonZeroG)",
+  "version": "1.0.0",
+  "description": "Zero-G Reverse Engineering Anything & Sandboxed Closed-Loop Safe Rust Verifier for Gemini 4 Argon and Antigravity 2.0.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Extract the full call subgraph and latent binary hazards from this binary with decompile_subgraph",
+    "Port this native C/C++ subsystem to #![forbid(unsafe_code)] Safe Rust and prove 10,000-seed parity",
+    "Inspect this stripped Rust/C++, PyInstaller, GGUF AI model, or Unity IL2CPP artifact"
+  ],
+  "disabled": false
+}

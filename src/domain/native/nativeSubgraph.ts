@@ -14,8 +14,16 @@ export const decompileSubgraphInputSchema = z
     procedure: z
       .string()
       .min(1)
+      .optional()
       .describe(
         "Root procedure selector: exact symbol name or 0x-prefixed hexadecimal entry address.",
+      ),
+    entry: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Alias for procedure: root procedure symbol name or 0x-prefixed hexadecimal entry address.",
       ),
     max_depth: z
       .number()
@@ -102,6 +110,43 @@ export const inferredStructOffsetSchema = z
 
 export type InferredStructOffset = z.infer<typeof inferredStructOffsetSchema>;
 
+export const latentBinaryHazardCategorySchema = z
+  .enum([
+    "potential_integer_overflow_to_pointer",
+    "unchecked_division",
+    "thread_hostile_mutable_global",
+    "unsafe_memory_sink",
+    "uninitialized_or_stack_hazard",
+  ])
+  .describe("Classification of a latent binary bug or undefined-behavior hazard.");
+
+export type LatentBinaryHazardCategory = z.infer<
+  typeof latentBinaryHazardCategorySchema
+>;
+
+export const latentBinaryHazardSchema = z
+  .object({
+    category: latentBinaryHazardCategorySchema,
+    severity: z
+      .enum(["high", "medium", "low"])
+      .describe("Estimated severity of the binary hazard during modernization."),
+    address: z
+      .string()
+      .min(1)
+      .describe("0x-prefixed instruction or procedure address where the hazard occurs."),
+    instruction_or_op: z
+      .string()
+      .min(1)
+      .describe("Disassembled instruction or HighFunction P-Code operation triggering the hazard."),
+    description: z
+      .string()
+      .min(1)
+      .describe("Actionable engineering explanation of the latent bug/UB hazard and how to eliminate it in Safe Rust."),
+  })
+  .strict();
+
+export type LatentBinaryHazard = z.infer<typeof latentBinaryHazardSchema>;
+
 export const subgraphStringRefSchema = z
   .object({
     address: z
@@ -138,6 +183,12 @@ export const subgraphNodeDossierSchema = z
     callees: z.array(subgraphProcedureRefSchema),
     referenced_strings: z.array(subgraphStringRefSchema),
     inferred_struct_offsets: z.array(inferredStructOffsetSchema),
+    latent_hazards: z
+      .array(latentBinaryHazardSchema)
+      .default([])
+      .describe(
+        "Static binary bug and undefined-behavior hazards uncovered in this procedure (unchecked division, 32-bit overflow before pointer indexing, mutable globals, unsafe sinks, stack hazards).",
+      ),
   })
   .strict();
 
@@ -176,6 +227,12 @@ export const nativeSubgraphSchema = z
     max_depth: z.number().int().min(0).max(10),
     max_nodes: z.number().int().min(1).max(100),
     node_count: z.number().int().nonnegative(),
+    total_latent_hazards: z
+      .number()
+      .int()
+      .nonnegative()
+      .default(0)
+      .describe("Total latent binary hazards detected across all nodes in the subgraph."),
     truncated: z.boolean(),
     cycle_edges: z.array(
       z

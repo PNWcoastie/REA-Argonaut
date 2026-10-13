@@ -4,7 +4,7 @@ import {
   capturedPwntoolsOutput,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
-import { access, stat, writeFile } from "node:fs/promises";
+import { access, realpath, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -291,8 +291,14 @@ export class PwntoolsDecoder<
         );
       phase = "artifact-read";
       selectedPath = input.path;
+      let resolvedPath = input.path;
+      try {
+        resolvedPath = await realpath(input.path);
+      } catch {
+        resolvedPath = input.path;
+      }
       const snapshot = await readStableArtifact(
-        input.path,
+        resolvedPath,
         PWNTOOLS_LIMITS.inputBytes,
         options?.signal,
       );

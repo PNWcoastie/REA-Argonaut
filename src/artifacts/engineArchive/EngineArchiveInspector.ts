@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import type {
   ExecutionOptions,
   ProviderIdentity,
@@ -15,6 +15,8 @@ import {
 import {
   ENGINE_ARCHIVE_PROVIDER_IDENTITY,
   engineArchiveReportSchema,
+  type ElectronAsarEntry,
+  type ElectronAsarSummary,
   type EngineArchiveReport,
   type GodotPackFileEntry,
   type GodotPackSummary,
@@ -29,6 +31,8 @@ import { err, ok, type Result } from "../../domain/result.js";
 const OPERATION = "inspect_engine_archive";
 const IL2CPP_MAGIC = 0xfab11baf;
 const GODOT_PCK_MAGIC = 0x43504447; // "GDPC" in little-endian
+const STREAM_HASH_CHUNK_BYTES = 4 * 1024 * 1024;
+const DIRECT_READ_THRESHOLD_BYTES = 32 * 1024 * 1024;
 
 export interface EngineArchivePort {
   readonly identity: ProviderIdentity;
@@ -36,6 +40,220 @@ export interface EngineArchivePort {
     input: InspectEngineArchiveInput,
     options?: ExecutionOptions,
   ): Promise<Result<EngineArchiveReport, AnalysisError>>;
+}
+
+async function readExactRange(
+  handle: FileHandle,
+  position: number,
+  length: number,
+): Promise<Buffer> {
+  const target = Buffer.allocUnsafe(length);
+  let totalRead = 0;
+  while (totalRead < length) {
+    const { bytesRead } = await handle.read(
+      target,
+      totalRead,
+      length - totalRead,
+      position + totalRead,
+    );
+    if (bytesRead === 0) break;
+    totalRead += bytesRead;
+  }
+  return totalRead === length ? target : target.subarray(0, totalRead);
+}
+
+async function computeStreamingSha256(
+  handle: FileHandle,
+  sizeBytes: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  const hash = createHash("sha256");
+  const chunkBuf = Buffer.allocUnsafe(
+    Math.min(STREAM_HASH_CHUNK_BYTES, Math.max(1, sizeBytes)),
+  );
+  let offset = 0;
+  while (offset < sizeBytes) {
+    if (signal?.aborted) {
+      throw new AnalysisCancelledError(OPERATION);
+    }
+    const toRead = Math.min(chunkBuf.length, sizeBytes - offset);
+    const { bytesRead } = await handle.read(chunkBuf, 0, toRead, offset);
+    if (bytesRead === 0) break;
+    hash.update(
+      bytesRead === chunkBuf.length
+        ? chunkBuf
+        : chunkBuf.subarray(0, bytesRead),
+    );
+    offset += bytesRead;
+  }
+  return hash.digest("hex");
+}
+
+interface RawAsarNode {
+  files?: Record<string, RawAsarNode>;
+  size?: number;
+  offset?: string | number;
+  unpacked?: boolean;
+  executable?: boolean;
+  integrity?: {
+    algorithm?: string;
+    hash?: string;
+  };
+}
+
+async function parseElectronAsar(
+  handle: FileHandle,
+  headerBuf: Buffer,
+  sizeBytes: number,
+  input: InspectEngineArchiveInput,
+): Promise<{ summary: ElectronAsarSummary; version: string } | null> {
+  if (sizeBytes < 17 || headerBuf.length < 17) return null;
+  const pickleIntSize = headerBuf.readUInt32LE(0);
+  if (pickleIntSize !== 4) return null;
+
+  const headerSize = headerBuf.readUInt32LE(4);
+  const headerPayloadSize = headerBuf.readUInt32LE(8);
+  const jsonByteLength = headerBuf.readUInt32LE(12);
+  void headerPayloadSize;
+
+  if (
+    jsonByteLength <= 0 ||
+    jsonByteLength > 32 * 1024 * 1024 ||
+    16 + jsonByteLength > sizeBytes ||
+    headerBuf[16] !== 0x7b
+  ) {
+    return null;
+  }
+
+  const jsonBuf = await readExactRange(handle, 16, jsonByteLength);
+  let rootNode: RawAsarNode;
+  try {
+    rootNode = JSON.parse(jsonBuf.toString("utf8")) as RawAsarNode;
+  } catch {
+    return null;
+  }
+
+  if (!rootNode || typeof rootNode !== "object" || !rootNode.files) {
+    return null;
+  }
+
+  const maxFiles = input.max_files ?? 2_000;
+  const files: ElectronAsarEntry[] = [];
+  const nativeAddons: string[] = [];
+  let totalFiles = 0;
+  let totalDirectories = 0;
+  let unpackedFiles = 0;
+
+  let rootPkgOffset: number | null = null;
+  let rootPkgSize = 0;
+  let rootPkgUnpacked = false;
+
+  const walk = (dirMap: Record<string, RawAsarNode>, prefix: string): void => {
+    for (const [name, node] of Object.entries(dirMap)) {
+      if (!node || typeof node !== "object") continue;
+      const relPath = prefix ? `${prefix}/${name}` : name;
+      if (node.files && typeof node.files === "object") {
+        totalDirectories++;
+        walk(node.files, relPath);
+      } else {
+        totalFiles++;
+        const fileSize =
+          typeof node.size === "number" && node.size >= 0
+            ? Math.floor(node.size)
+            : 0;
+        const parsedOffset =
+          typeof node.offset === "string"
+            ? Number.parseInt(node.offset, 10)
+            : typeof node.offset === "number"
+              ? Math.floor(node.offset)
+              : null;
+        const cleanOffset =
+          parsedOffset !== null &&
+          Number.isFinite(parsedOffset) &&
+          parsedOffset >= 0
+            ? parsedOffset
+            : null;
+        const isUnpacked = Boolean(node.unpacked);
+        const isExecutable = Boolean(node.executable);
+        const integrityHash =
+          typeof node.integrity?.hash === "string"
+            ? node.integrity.hash
+            : null;
+
+        if (isUnpacked) {
+          unpackedFiles++;
+        }
+        if (/\.(?:node|dll|so|dylib)$/i.test(relPath)) {
+          nativeAddons.push(relPath);
+        }
+        if (relPath === "package.json") {
+          rootPkgOffset = cleanOffset;
+          rootPkgSize = fileSize;
+          rootPkgUnpacked = isUnpacked;
+        }
+        if (files.length < maxFiles) {
+          files.push({
+            path: relPath,
+            size_bytes: fileSize,
+            offset: cleanOffset,
+            unpacked: isUnpacked,
+            is_executable: isExecutable,
+            integrity_hash: integrityHash,
+          });
+        }
+      }
+    }
+  };
+
+  walk(rootNode.files, "");
+
+  let mainEntryScript: string | null = null;
+  let versionLabel = "asar-v1";
+  const dataBaseOffset = 8 + headerSize;
+
+  if (
+    !rootPkgUnpacked &&
+    rootPkgOffset !== null &&
+    rootPkgSize > 0 &&
+    rootPkgSize <= 262_144 &&
+    dataBaseOffset + rootPkgOffset + rootPkgSize <= sizeBytes
+  ) {
+    try {
+      const pkgBuf = await readExactRange(
+        handle,
+        dataBaseOffset + rootPkgOffset,
+        rootPkgSize,
+      );
+      const pkgJson = JSON.parse(pkgBuf.toString("utf8")) as {
+        main?: unknown;
+        version?: unknown;
+      };
+      if (typeof pkgJson.main === "string" && pkgJson.main.trim().length > 0) {
+        mainEntryScript = pkgJson.main.trim();
+      }
+      if (
+        typeof pkgJson.version === "string" &&
+        pkgJson.version.trim().length > 0
+      ) {
+        versionLabel = `asar-v1 (package v${pkgJson.version.trim()})`;
+      }
+    } catch {
+      // Ignore malformed embedded package.json
+    }
+  }
+
+  return {
+    version: versionLabel,
+    summary: {
+      header_size_bytes: jsonByteLength,
+      total_files: totalFiles,
+      total_directories: totalDirectories,
+      unpacked_files: unpackedFiles,
+      main_entry_script: mainEntryScript,
+      native_addons: nativeAddons,
+      files,
+    },
+  };
 }
 
 function isPrintableIdentifier(str: string, allowEmpty: boolean): boolean {
@@ -192,11 +410,7 @@ function parseIl2CppMetadata(
   for (const sec of extraSections) {
     if (claimedOffsets.has(sec.offset)) continue;
     const firstStr = readIdentifier(buf.readInt32LE(sec.offset));
-    if (
-      !imagesSec &&
-      firstStr &&
-      /\.(?:dll|exe)$/i.test(firstStr)
-    ) {
+    if (!imagesSec && firstStr && /\.(?:dll|exe)$/i.test(firstStr)) {
       imagesSec = { offset: sec.offset, size: sec.size };
       claimedOffsets.add(sec.offset);
     }
@@ -225,7 +439,11 @@ function parseIl2CppMetadata(
       for (let i = 0; i < count; i++) {
         const nameIdx = buf.readInt32LE(imagesSec.offset + i * s);
         const name = readIdentifier(nameIdx);
-        if (!name || !isStringBoundary(nameIdx) || !isPrintableIdentifier(name, false)) {
+        if (
+          !name ||
+          !isStringBoundary(nameIdx) ||
+          !isPrintableIdentifier(name, false)
+        ) {
           allValid = false;
           break;
         }
@@ -403,9 +621,7 @@ function parseIl2CppMetadata(
       }
 
       const paramCount =
-        bestStride >= 16
-          ? buf.readUInt16LE(recOff + bestStride - 2)
-          : 0;
+        bestStride >= 16 ? buf.readUInt16LE(recOff + bestStride - 2) : 0;
 
       methods.push({
         method_index: i,
@@ -554,26 +770,21 @@ export class EngineArchiveInspector implements EngineArchivePort {
       return err(new AnalysisCancelledError(OPERATION));
     }
 
-    let buf: Buffer;
+    const effectiveInput: InspectEngineArchiveInput = {
+      ...input,
+      max_files: input.max_entries ?? input.max_files,
+    };
+
+    let handle: FileHandle;
     try {
-      const st = await stat(input.path);
-      if (!st.isFile()) {
-        return err(
-          new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message: `Path is not a regular file: ${input.path}`,
-            },
-          ]),
-        );
-      }
-      buf = await readFile(input.path);
+      handle = await open(effectiveInput.path, "r");
     } catch (cause) {
       const code = (cause as NodeJS.ErrnoException | undefined)?.code;
       if (code === "EACCES" || code === "EPERM") {
         return err(
-          new AnalysisAccessDeniedError(OPERATION, input.path, code, { cause }),
+          new AnalysisAccessDeniedError(OPERATION, effectiveInput.path, code, {
+            cause,
+          }),
         );
       }
       return err(
@@ -581,47 +792,135 @@ export class EngineArchiveInspector implements EngineArchivePort {
           {
             path: ["path"],
             reason: "invalid_value",
-            message: `Unable to read engine archive at ${input.path}`,
+            message: `Unable to open engine archive at ${effectiveInput.path}`,
           },
         ]),
       );
     }
 
-    if (options?.signal?.aborted) {
-      return err(new AnalysisCancelledError(OPERATION));
-    }
+    try {
+      const st = await handle.stat();
+      if (!st.isFile()) {
+        return err(
+          new AnalysisInputError(OPERATION, undefined, [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: `Path is not a regular file: ${effectiveInput.path}`,
+            },
+          ]),
+        );
+      }
 
-    const il2cpp = parseIl2CppMetadata(buf, input);
-    const godotPck = il2cpp === null ? parseGodotPck(buf, input) : null;
-
-    if (!il2cpp && !godotPck) {
-      return err(
-        new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          "Unsupported game engine archive format (expected Unity IL2CPP global-metadata.dat or Godot .pck).",
-        ),
+      const sizeBytes = st.size;
+      const headerBuf = await readExactRange(
+        handle,
+        0,
+        Math.min(64, sizeBytes),
       );
+
+      if (options?.signal?.aborted) {
+        return err(new AnalysisCancelledError(OPERATION));
+      }
+
+      // 1. Check for Electron .asar (Chromium Pickle Header)
+      const asarResult = await parseElectronAsar(
+        handle,
+        headerBuf,
+        sizeBytes,
+        effectiveInput,
+      );
+      if (asarResult !== null) {
+        const sha256 = await computeStreamingSha256(
+          handle,
+          sizeBytes,
+          options?.signal,
+        );
+        const report: EngineArchiveReport = {
+          path: effectiveInput.path,
+          sha256,
+          size_bytes: sizeBytes,
+          archive_format: "electron-asar",
+          version: asarResult.version,
+          il2cpp: null,
+          godot_pck: null,
+          asar: asarResult.summary,
+        };
+        const parsed = engineArchiveReportSchema.safeParse(report);
+        if (!parsed.success) {
+          return err(new AnalysisOutputError(OPERATION, parsed.error.message));
+        }
+        return ok(parsed.data);
+      }
+
+      // 2. Check Unity IL2CPP global-metadata.dat or Godot .pck
+      let buf: Buffer;
+      let sha256: string;
+      if (sizeBytes <= DIRECT_READ_THRESHOLD_BYTES) {
+        buf = await readExactRange(handle, 0, sizeBytes);
+        sha256 = createHash("sha256").update(buf).digest("hex");
+      } else {
+        // For files > 32 MiB, stream sha256 and read bounded header/table slice
+        sha256 = await computeStreamingSha256(
+          handle,
+          sizeBytes,
+          options?.signal,
+        );
+        buf = await readExactRange(
+          handle,
+          0,
+          Math.min(sizeBytes, DIRECT_READ_THRESHOLD_BYTES),
+        );
+      }
+
+      const il2cpp = parseIl2CppMetadata(buf, effectiveInput);
+      const godotPck =
+        il2cpp === null ? parseGodotPck(buf, effectiveInput) : null;
+
+      if (!il2cpp && !godotPck) {
+        return err(
+          new AnalysisUnsupportedTargetError(
+            OPERATION,
+            input.path,
+            "Unsupported game engine archive format (expected Unity IL2CPP global-metadata.dat, Godot .pck, or Electron .asar).",
+          ),
+        );
+      }
+
+      const report: EngineArchiveReport = {
+        path: input.path,
+        sha256,
+        size_bytes: sizeBytes,
+        archive_format: il2cpp ? "unity-il2cpp-metadata" : "godot-pck",
+        version: il2cpp
+          ? String(il2cpp.metadata_version)
+          : godotPck!.engine_version,
+        il2cpp: il2cpp ?? null,
+        godot_pck: godotPck ?? null,
+        asar: null,
+      };
+
+      const parsed = engineArchiveReportSchema.safeParse(report);
+      if (!parsed.success) {
+        return err(new AnalysisOutputError(OPERATION, parsed.error.message));
+      }
+
+      return ok(parsed.data);
+    } catch (cause) {
+      if (cause instanceof AnalysisCancelledError) {
+        return err(cause);
+      }
+      return err(
+        new AnalysisInputError(OPERATION, { cause }, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `Failed reading engine archive at ${input.path}`,
+          },
+        ]),
+      );
+    } finally {
+      await handle.close().catch(() => undefined);
     }
-
-    const sha256 = createHash("sha256").update(buf).digest("hex");
-    const report: EngineArchiveReport = {
-      path: input.path,
-      sha256,
-      size_bytes: buf.length,
-      archive_format: il2cpp ? "unity-il2cpp-metadata" : "godot-pck",
-      version: il2cpp
-        ? String(il2cpp.metadata_version)
-        : godotPck!.engine_version,
-      il2cpp: il2cpp ?? null,
-      godot_pck: godotPck ?? null,
-    };
-
-    const parsed = engineArchiveReportSchema.safeParse(report);
-    if (!parsed.success) {
-      return err(new AnalysisOutputError(OPERATION, parsed.error.message));
-    }
-
-    return ok(parsed.data);
   }
 }

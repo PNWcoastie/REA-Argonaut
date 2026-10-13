@@ -9,8 +9,8 @@ export const ENGINE_ARCHIVE_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze(
 });
 
 export const engineArchiveFormatSchema = z
-  .enum(["unity-il2cpp-metadata", "godot-pck"])
-  .describe("Detected game engine metadata or resource pack archive format.");
+  .enum(["unity-il2cpp-metadata", "godot-pck", "electron-asar"])
+  .describe("Detected game engine metadata, resource pack, or Electron ASAR archive format.");
 
 export type EngineArchiveFormat = z.infer<typeof engineArchiveFormatSchema>;
 
@@ -20,7 +20,7 @@ export const inspectEngineArchiveInputSchema = z
       .string()
       .min(1)
       .describe(
-        "Absolute filesystem path to a Unity IL2CPP global-metadata.dat binary or Godot Engine .pck archive.",
+        "Absolute filesystem path to a Unity IL2CPP global-metadata.dat binary, Godot Engine .pck archive, or Electron .asar archive.",
       ),
     max_types: z
       .number()
@@ -49,7 +49,14 @@ export const inspectEngineArchiveInputSchema = z
       .min(1)
       .max(50_000)
       .default(2_000)
-      .describe("Maximum number of bundled res:// files to return for Godot .pck archives (default 2000)."),
+      .describe("Maximum number of bundled files to return for Godot .pck or Electron .asar archives (default 2000)."),
+    max_entries: z
+      .number()
+      .int()
+      .min(1)
+      .max(50_000)
+      .optional()
+      .describe("Optional alias for max_files: maximum number of archive entries/files to return."),
   })
   .strict();
 
@@ -135,6 +142,33 @@ export const godotPackSummarySchema = z
 
 export type GodotPackSummary = z.infer<typeof godotPackSummarySchema>;
 
+export const electronAsarEntrySchema = z
+  .object({
+    path: z.string().min(1).describe("Virtual path inside the Electron ASAR archive (e.g., 'dist/main.js')."),
+    size_bytes: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative().nullable(),
+    unpacked: z.boolean(),
+    is_executable: z.boolean(),
+    integrity_hash: z.string().nullable(),
+  })
+  .strict();
+
+export type ElectronAsarEntry = z.infer<typeof electronAsarEntrySchema>;
+
+export const electronAsarSummarySchema = z
+  .object({
+    header_size_bytes: z.number().int().positive(),
+    total_files: z.number().int().nonnegative(),
+    total_directories: z.number().int().nonnegative(),
+    unpacked_files: z.number().int().nonnegative(),
+    main_entry_script: z.string().nullable(),
+    native_addons: z.array(z.string()),
+    files: z.array(electronAsarEntrySchema),
+  })
+  .strict();
+
+export type ElectronAsarSummary = z.infer<typeof electronAsarSummarySchema>;
+
 export const engineArchiveReportSchema = z
   .object({
     path: z.string().min(1),
@@ -144,6 +178,7 @@ export const engineArchiveReportSchema = z
     version: z.string().min(1),
     il2cpp: il2CppMetadataSummarySchema.nullable(),
     godot_pck: godotPackSummarySchema.nullable(),
+    asar: electronAsarSummarySchema.nullable().default(null),
   })
   .strict();
 

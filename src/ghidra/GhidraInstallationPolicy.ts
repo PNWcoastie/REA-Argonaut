@@ -75,8 +75,7 @@ export const ghidraReleaseCompatibility = (
   if (version === undefined) return { status: "unresolved", raw };
   if (raw === SUPPORTED_GHIDRA_VERSION)
     return { status: "verified", version, raw };
-  const verified = verifiedGhidraRelease();
-  return version.major === verified.major && version.minor === verified.minor
+  return version.major === 11 || version.major === 12
     ? { status: "compatible", version, raw }
     : { status: "unsupported", version, raw };
 };

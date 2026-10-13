@@ -539,6 +539,7 @@ function fallbackScanMarshalStrings(buf: Buffer, startOffset: number): {
 function parsePycBytecode(
   buf: Buffer,
   maxCodeObjects: number,
+  maxStrings?: number,
 ): PythonFrozenBinaryReport["pyc"] | null {
   if (buf.length < 16) return null;
   if (buf[2] !== 0x0d || buf[3] !== 0x0a) return null;
@@ -566,7 +567,11 @@ function parsePycBytecode(
   }
 
   // Reverse codeObjects so outer `<module>` comes first if inner functions were pushed first
-  const codeObjects = [...reader.codeObjects].reverse();
+  const codeObjects = [...reader.codeObjects].reverse().map((co) =>
+    maxStrings !== undefined
+      ? { ...co, string_constants: co.string_constants.slice(0, maxStrings) }
+      : co,
+  );
   const importedNames = new Set<string>();
   for (const co of codeObjects) {
     for (const n of co.names) {
@@ -635,13 +640,15 @@ export class PythonFrozenBinaryInspector implements PythonFrozenBinaryPort {
       return err(new AnalysisCancelledError(OPERATION));
     }
 
-    const pyinstaller = parsePyinstallerArchive(
-      buf,
-      input.max_toc_entries ?? 1000,
-    );
+    const maxTocEntries = input.max_entries ?? input.max_toc_entries ?? 1000;
+    const pyinstaller = parsePyinstallerArchive(buf, maxTocEntries);
     const pyc =
       pyinstaller === null
-        ? parsePycBytecode(buf, input.max_code_objects ?? 200)
+        ? parsePycBytecode(
+            buf,
+            input.max_code_objects ?? 200,
+            input.max_strings,
+          )
         : null;
 
     if (!pyinstaller && !pyc) {

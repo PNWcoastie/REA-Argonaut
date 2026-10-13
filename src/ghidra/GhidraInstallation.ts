@@ -366,7 +366,14 @@ const installationCoordinates = (
   host: GhidraInstallationHost,
 ): GhidraInstallationCoordinates => {
   const path = platform === "win32" ? win32 : posix;
-  const installDir = options.installDir ?? null;
+  const envInstallDir =
+    options.environment?.GHIDRA_INSTALL_DIR ??
+    options.environment?.REA_GHIDRA_HOME;
+  const installDir =
+    options.installDir ??
+    (envInstallDir !== undefined && envInstallDir.length > 0
+      ? envInstallDir
+      : null);
   const applicationPropertiesPath =
     installDir === null
       ? null

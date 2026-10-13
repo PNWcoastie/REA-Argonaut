@@ -1426,6 +1426,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
 
             JsonArray inferredOffsets = extractInferredStructOffsets(fn, decompilation, scan.instructions);
+            JsonArray latentHazards = extractLatentBinaryHazards(fn, decompilation, scan.instructions, calleeList);
 
             JsonObject procObj = new JsonObject();
             procObj.addProperty("address", fnCanonicalAddr);
@@ -1441,6 +1442,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             nodeObj.add("callees", calleesJson);
             nodeObj.add("referenced_strings", nodeStrings);
             nodeObj.add("inferred_struct_offsets", inferredOffsets);
+            nodeObj.add("latent_hazards", latentHazards);
             nodes.add(nodeObj);
 
             String fromName = procedureName(fn);
@@ -1492,6 +1494,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
         }
 
+        int totalLatentHazards = 0;
+        for (JsonElement nElem : nodes) {
+            JsonObject nObj = nElem.getAsJsonObject();
+            if (nObj.has("latent_hazards") && nObj.get("latent_hazards").isJsonArray()) {
+                totalLatentHazards += nObj.getAsJsonArray("latent_hazards").size();
+            }
+        }
+
         JsonArray aggregatedStrings = new JsonArray();
         for (Map.Entry<String, String> entry : stringValuesByAddr.entrySet()) {
             JsonObject agg = new JsonObject();
@@ -1524,6 +1534,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("max_depth", maxDepth);
         result.addProperty("max_nodes", maxNodes);
         result.addProperty("node_count", nodes.size());
+        result.addProperty("total_latent_hazards", totalLatentHazards);
         result.addProperty("truncated", truncated);
         result.add("cycle_edges", cycleEdges);
         result.add("nodes", nodes);
@@ -1531,6 +1542,213 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("aggregated_strings", aggregatedStrings);
         result.add("limitations", limitations);
         return result;
+    }
+
+    private static final Set<String> UNSAFE_C_SINKS = Set.of(
+        "strcpy",
+        "strcat",
+        "sprintf",
+        "vsprintf",
+        "gets",
+        "scanf",
+        "__isoc99_scanf",
+        "system",
+        "popen"
+    );
+
+    private JsonArray extractLatentBinaryHazards(
+        Function function,
+        DecompileResults decompilation,
+        List<Instruction> instructions,
+        List<Function> callees
+    ) {
+        Map<String, JsonObject> hazards = new LinkedHashMap<>();
+        HighFunction highFunction = decompilation == null ? null : decompilation.getHighFunction();
+
+        if (highFunction != null) {
+            Iterator<PcodeOpAST> ops = highFunction.getPcodeOps();
+            while (ops.hasNext()) {
+                PcodeOpAST op = ops.next();
+                int opcode = op.getOpcode();
+                String opAddr = canonicalAddress(op.getSeqnum().getTarget());
+                if (opcode == PcodeOp.INT_MULT && op.getOutput() != null && op.getOutput().getSize() <= 4) {
+                    Iterator<PcodeOp> descIt = op.getOutput().getDescendants();
+                    while (descIt != null && descIt.hasNext()) {
+                        PcodeOp desc = descIt.next();
+                        int dOp = desc.getOpcode();
+                        if (dOp == PcodeOp.INT_SEXT || dOp == PcodeOp.INT_ZEXT || dOp == PcodeOp.PTRADD || dOp == PcodeOp.PTRSUB) {
+                            addHazard(
+                                hazards,
+                                "potential_integer_overflow_to_pointer",
+                                "high",
+                                opAddr,
+                                op.getMnemonic() + " -> " + desc.getMnemonic(),
+                                "32-bit integer multiplication feeds 64-bit sign/zero extension or pointer indexing; may wrap before pointer offset calculation. Use checked_mul / saturating_mul and usize indexing in Safe Rust."
+                            );
+                        }
+                    }
+                } else if (
+                    opcode == PcodeOp.INT_DIV ||
+                    opcode == PcodeOp.INT_SDIV ||
+                    opcode == PcodeOp.INT_REM ||
+                    opcode == PcodeOp.INT_SREM ||
+                    opcode == PcodeOp.FLOAT_DIV
+                ) {
+                    Varnode divisor = op.getNumInputs() >= 2 ? op.getInput(1) : null;
+                    if (divisor != null && !divisor.isConstant()) {
+                        addHazard(
+                            hazards,
+                            "unchecked_division",
+                            "high",
+                            opAddr,
+                            op.getMnemonic(),
+                            "Division or remainder by a non-constant operand without an immediate local zero guard; guard with checked_div / checked_rem in Safe Rust."
+                        );
+                    }
+                } else if (opcode == PcodeOp.STORE && op.getNumInputs() >= 2) {
+                    Varnode ptrVn = op.getInput(1);
+                    if (ptrVn != null && ptrVn.isAddress()) {
+                        Address targetAddr = ptrVn.getAddress();
+                        if (targetAddr != null && targetAddr.isMemoryAddress()) {
+                            addHazard(
+                                hazards,
+                                "thread_hostile_mutable_global",
+                                "medium",
+                                opAddr,
+                                "STORE @" + canonicalAddress(targetAddr),
+                                "Direct write to mutable global memory at " + canonicalAddress(targetAddr) + " without synchronization; encapsulate state in an explicit context struct or Atomic/Mutex in Safe Rust."
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        boolean hasSignExtOrPtrIndex = false;
+        for (Instruction ins : instructions) {
+            String m = ins.getMnemonicString().toLowerCase(Locale.ROOT);
+            if (m.equals("movsxd") || m.equals("movslq") || m.equals("cdqe") || m.equals("cltq") || m.equals("sxtw")) {
+                hasSignExtOrPtrIndex = true;
+                break;
+            }
+        }
+
+        for (int i = 0; i < instructions.size(); i++) {
+            Instruction ins = instructions.get(i);
+            String m = ins.getMnemonicString().toLowerCase(Locale.ROOT);
+            String insAddr = canonicalAddress(ins.getAddress());
+            String rendered = insAddr + ": " + ins.getMnemonicString() + (ins.getNumOperands() > 0 ? " " + operands(ins) : "");
+            String opsLower = operands(ins).toLowerCase(Locale.ROOT);
+
+            if ((m.startsWith("imul") || m.startsWith("mul") || m.equals("madd")) &&
+                (hasSignExtOrPtrIndex || opsLower.matches(".*\\b(e[abcd]x|e[sd]i|r[89]d|r1[0-5]d|w\\d+)\\b.*"))) {
+                addHazard(
+                    hazards,
+                    "potential_integer_overflow_to_pointer",
+                    "high",
+                    insAddr,
+                    rendered,
+                    "32-bit multiplication before 64-bit sign-extension or pointer arithmetic can overflow in C/C++; use checked_mul or promote operands to u64/usize before multiplying in Safe Rust."
+                );
+            }
+
+            if (m.equals("div") || m.equals("idiv") || m.equals("udiv") || m.equals("sdiv") ||
+                m.equals("divss") || m.equals("divsd") || m.equals("fdiv")) {
+                boolean guarded = false;
+                for (int back = Math.max(0, i - 4); back < i; back++) {
+                    String prevM = instructions.get(back).getMnemonicString().toLowerCase(Locale.ROOT);
+                    if (prevM.startsWith("test") || prevM.startsWith("cmp") || prevM.startsWith("cbz") ||
+                        prevM.startsWith("cbnz") || prevM.startsWith("ucomi")) {
+                        guarded = true;
+                        break;
+                    }
+                }
+                if (!guarded) {
+                    addHazard(
+                        hazards,
+                        "unchecked_division",
+                        "high",
+                        insAddr,
+                        rendered,
+                        "Unchecked hardware division instruction without an adjacent zero check; use checked_div or explicit zero-divisor handling in Safe Rust."
+                    );
+                }
+            }
+
+            for (Reference ref : ins.getReferencesFrom()) {
+                if (ref.getReferenceType().isWrite() && ref.getToAddress().isMemoryAddress()) {
+                    MemoryBlock block = currentProgram.getMemory().getBlock(ref.getToAddress());
+                    if (block != null && block.isWrite()) {
+                        addHazard(
+                            hazards,
+                            "thread_hostile_mutable_global",
+                            "medium",
+                            insAddr,
+                            rendered,
+                            "Instruction mutates writable global section (" + block.getName() + " at " + canonicalAddress(ref.getToAddress()) + "); replace mutable static state with an explicit context struct or Atomic/Mutex in Safe Rust."
+                        );
+                    }
+                }
+            }
+
+            if (m.equals("sub") && opsLower.startsWith("rsp,")) {
+                String immPart = opsLower.substring(4).trim();
+                try {
+                    long stackBytes = parseInteger(immPart);
+                    if (stackBytes >= 4096) {
+                        addHazard(
+                            hazards,
+                            "uninitialized_or_stack_hazard",
+                            "medium",
+                            insAddr,
+                            rendered,
+                            "Large stack frame allocation (" + stackBytes + " bytes); prefer heap-backed Vec or bounded slices in Safe Rust."
+                        );
+                    }
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
+        for (Function callee : callees) {
+            String cName = callee.getName().replaceFirst("^_+", "");
+            if (UNSAFE_C_SINKS.contains(cName)) {
+                String cAddr = canonicalAddress(callee.getEntryPoint());
+                addHazard(
+                    hazards,
+                    "unsafe_memory_sink",
+                    "high",
+                    cAddr,
+                    "call " + callee.getName(),
+                    "Calls unbounded C memory/command sink '" + cName + "'; replace with bounds-checked slice/String operations in Safe Rust."
+                );
+            }
+        }
+
+        JsonArray out = new JsonArray();
+        for (JsonObject h : hazards.values()) {
+            out.add(h);
+        }
+        return out;
+    }
+
+    private static void addHazard(
+        Map<String, JsonObject> hazards,
+        String category,
+        String severity,
+        String address,
+        String instructionOrOp,
+        String description
+    ) {
+        String key = category + ":" + address;
+        if (hazards.containsKey(key)) return;
+        JsonObject obj = new JsonObject();
+        obj.addProperty("category", category);
+        obj.addProperty("severity", severity);
+        obj.addProperty("address", address);
+        obj.addProperty("instruction_or_op", instructionOrOp);
+        obj.addProperty("description", description);
+        hazards.put(key, obj);
     }
 
     private JsonArray extractInferredStructOffsets(
@@ -4264,6 +4482,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record Request(int id, String method, JsonObject params) {}
 
     private static final class RequestFailure extends RuntimeException {
+        private static final long serialVersionUID = 1L;
         private final String code;
 
         RequestFailure(String code, String message) {

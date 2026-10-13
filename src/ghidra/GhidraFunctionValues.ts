@@ -10,7 +10,7 @@ import {
 } from "../domain/native/nativeInstruction.js";
 
 import {
-  type AnalysisInputError,
+  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -116,21 +116,38 @@ export const parseGhidraFunctionInput = (
   value: Readonly<Record<string, JsonValue>>,
 ): Result<Readonly<Record<string, JsonValue>>, AnalysisInputError> => {
   const parsed = inputSchemas[operation].safeParse(value);
-  return parsed.success
-    ? ok(
-        jsonObjectSchema.parse(
-          Object.fromEntries(
-            Object.entries(parsed.data).filter(
-              ([, value]) => value !== undefined,
-            ),
-          ),
-        ),
-      )
-    : err(
-        analysisInputErrorFromIssues(operation, parsed.error.issues, value, {
-          cause: parsed.error,
+  if (!parsed.success) {
+    return err(
+      analysisInputErrorFromIssues(operation, parsed.error.issues, value, {
+        cause: parsed.error,
+      }),
+    );
+  }
+  const normalized = Object.fromEntries(
+    Object.entries(parsed.data).filter(
+      ([, entryValue]) => entryValue !== undefined,
+    ),
+  );
+  if (operation === "decompile_subgraph") {
+    const procSelector =
+      typeof normalized.procedure === "string" &&
+      normalized.procedure.trim().length > 0
+        ? normalized.procedure
+        : typeof normalized.entry === "string" &&
+            normalized.entry.trim().length > 0
+          ? normalized.entry
+          : undefined;
+    if (procSelector === undefined) {
+      return err(
+        new AnalysisInputError(operation, {
+          userMessage: "decompile_subgraph requires procedure (or entry)",
         }),
       );
+    }
+    normalized.procedure = procSelector;
+    delete normalized.entry;
+  }
+  return ok(jsonObjectSchema.parse(normalized));
 };
 
 const localVariable = z

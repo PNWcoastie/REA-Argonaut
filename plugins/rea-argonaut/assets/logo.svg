@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
+  <defs>
+    <linearGradient id="argonFacet" x1="28" y1="28" x2="228" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="coreGlow" x1="64" y1="64" x2="192" y2="192" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
+  <!-- Outer Diamond Frame (with >=10% 28px safe margin) -->
+  <polygon
+    points="128,28 228,128 128,228 28,128"
+    stroke="url(#argonFacet)"
+    stroke-width="10"
+    stroke-linejoin="round"
+    fill="none"
+  />
+  <!-- Inner Octagonal Subgraph Ring -->
+  <polygon
+    points="128,60 176,80 196,128 176,176 128,196 80,176 60,128 80,80"
+    stroke="#94A3B8"
+    stroke-opacity="0.55"
+    stroke-width="4"
+    stroke-linejoin="round"
+    fill="none"
+  />
+  <!-- Directed Call-Subgraph Edges -->
+  <line x1="128" y1="68" x2="84" y2="128" stroke="url(#coreGlow)" stroke-width="6" stroke-linecap="round"/>
+  <line x1="128" y1="68" x2="172" y2="128" stroke="url(#coreGlow)" stroke-width="6" stroke-linecap="round"/>
+  <line x1="84" y1="128" x2="172" y2="128" stroke="#38BDF8" stroke-width="5" stroke-dasharray="8 6" stroke-linecap="round"/>
+  <line x1="84" y1="128" x2="128" y2="188" stroke="url(#argonFacet)" stroke-width="6" stroke-linecap="round"/>
+  <line x1="172" y1="128" x2="128" y2="188" stroke="url(#argonFacet)" stroke-width="6" stroke-linecap="round"/>
+  <!-- Subgraph Nodes (High-Contrast Dual-Stroke for Dark & Light Themes) -->
+  <circle cx="128" cy="68" r="14" fill="#38BDF8" stroke="#0F172A" stroke-width="4"/>
+  <circle cx="84" cy="128" r="13" fill="#818CF8" stroke="#0F172A" stroke-width="4"/>
+  <circle cx="172" cy="128" r="13" fill="#818CF8" stroke="#0F172A" stroke-width="4"/>
+  <circle cx="128" cy="188" r="15" fill="#F97316" stroke="#0F172A" stroke-width="4"/>
+  <!-- Verified Bit-Exact Checkmark Core inside Bottom Crucible Node -->
+  <path d="M122 188 L126.5 192.5 L135 183.5" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

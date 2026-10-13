@@ -608,6 +608,9 @@ export const createGhidraProviderClient = (input: {
     ...(context === undefined ? {} : { runId: context.runId }),
     logger: logger.child({ layer: "ghidra-bridge" }),
   });
+  if (client instanceof GhidraClient) {
+    void client.start().catch(() => {});
+  }
   const checkExtensions = async (
     operation: AnalysisOperation,
     info: GhidraSessionInfo,

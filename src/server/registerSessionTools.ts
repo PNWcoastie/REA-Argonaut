@@ -201,6 +201,7 @@ const registerOpenLifecycleTool = (
           return server.delivery.toCallToolResult(loaded, openContract);
         snapshot = loaded.value;
       }
+      const providerId = input.provider_id ?? input.provider;
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
@@ -211,9 +212,7 @@ const registerOpenLifecycleTool = (
           ...(input.entry_point === undefined
             ? {}
             : { entryPoint: input.entry_point }),
-          ...(input.provider_id === undefined
-            ? {}
-            : { providerId: input.provider_id }),
+          ...(providerId === undefined ? {} : { providerId }),
           ...(snapshot === undefined ? {} : { snapshot }),
         }),
       );

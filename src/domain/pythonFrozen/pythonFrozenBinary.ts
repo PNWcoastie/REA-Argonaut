@@ -34,6 +34,24 @@ export const inspectPythonFrozenBinaryInputSchema = z
       .describe(
         "Maximum number of Python marshal code objects to return when inspecting .pyc bytecode (default 200).",
       ),
+    max_entries: z
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .optional()
+      .describe(
+        "Optional alias for max_toc_entries: maximum number of CArchive/PYZ entries to return.",
+      ),
+    max_strings: z
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .optional()
+      .describe(
+        "Optional cap on string constants returned per code object.",
+      ),
   })
   .strict();
 

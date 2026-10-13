@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ArgonZeroG Executive Scorecard — Verified C-to-Rust Reconstruction</title>
+  <style>
+    :root {
+      --bg: #080c14;
+      --panel: #101726;
+      --panel-border: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent-green: #10b981;
+      --accent-cyan: #06b6d4;
+      --accent-amber: #f59e0b;
+      --accent-purple: #8b5cf6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 36px 24px 64px;
+      background: radial-gradient(circle at top, #111c35 0%, var(--bg) 60%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+    .eyebrow {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 15px;
+      margin: 0 0 28px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+    }
+    .kpi-label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .kpi-value {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 6px;
+    }
+    .kpi-green { color: var(--accent-green); }
+    .kpi-cyan { color: var(--accent-cyan); }
+    .kpi-amber { color: var(--accent-amber); }
+    .kpi-purple { color: var(--accent-purple); }
+    .kpi-sub {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 22px;
+    }
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--panel-border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      font-size: 12.5px;
+      background: rgba(15, 23, 42, 0.75);
+      padding: 2px 6px;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-ok { background: rgba(16, 185, 129, 0.18); color: #34d399; }
+    .badge-warn { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+    .severity {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+    .severity-high { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .severity-medium { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .severity-low { background: rgba(6, 182, 212, 0.2); color: #22d3ee; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="eyebrow">ArgonZeroG • Gemini 4 Argon + Antigravity Scorecard</div>
+    <h1>FROM LEGACY C SHARED OBJECTS &amp; BINARY HAZARDS TO A 100% SAFE, VERIFIED RUST SUBSYSTEM</h1>
+    <p class="subtitle">
+      Live end-to-end telemetry against compiled target <code>libargon_showcase.so</code> over MCP <code>StdioClientTransport</code>.
+    </p>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">⚡ Native Rust Speedup</div>
+        <div class="kpi-value kpi-green">2.41x</div>
+        <div class="kpi-sub">
+          <code>12.7924 ns/call</code> C Oracle vs. <code>5.2991 ns/call</code> Safe Rust (100,000 iterations)
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">✅ Memory Safety</div>
+        <div class="kpi-value kpi-cyan">0 Unsafe</div>
+        <div class="kpi-sub">
+          <code>#![forbid(unsafe_code)]</code> enforced at compile time • Eliminated <strong>4</strong> legacy binary hazard(s)
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">🎯 Output Replication</div>
+        <div class="kpi-value kpi-purple">100.0%</div>
+        <div class="kpi-sub">
+          <code>10,064 / 10,064</code> deterministic boundary + SplitMix64 FFI seeds matched bit-exact
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">⏳ MCP Round-Trip Collapse</div>
+        <div class="kpi-value kpi-amber">18 → 1 (-94.4%)</div>
+        <div class="kpi-sub">
+          <strong>16.61x faster</strong> call-graph ingestion (<code>189.56 ms</code> → <code>11.41 ms</code>) in 1 cacheable turn
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>1. Whole-Subgraph Extraction (<code>decompile_subgraph</code>) vs. Legacy Micro-Paging</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Legacy Sequential Workflow</th>
+            <th>ArgonZeroG <code>decompile_subgraph</code></th>
+            <th>Measured Delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>MCP Tool Round-Trips</strong></td>
+            <td><code>18</code> sequential calls</td>
+            <td><code>1</code> batch call</td>
+            <td><span class="badge badge-ok">-94.4% round-trips</span></td>
+          </tr>
+          <tr>
+            <td><strong>Wall-Clock Latency</strong></td>
+            <td><code>189.56 ms</code></td>
+            <td><code>11.41 ms</code></td>
+            <td><span class="badge badge-ok">16.61x faster</span></td>
+          </tr>
+          <tr>
+            <td><strong>Procedures &amp; Call Edges</strong></td>
+            <td>4 procedures (manual stitch across 18 turns)</td>
+            <td><code>argon_authenticate_packet → argon_keystream_round → argon_tag_finalize → argon_rotl32</code> (4 typed edges)</td>
+            <td><span class="badge badge-ok">100% single-shot topology</span></td>
+          </tr>
+          <tr>
+            <td><strong>Wire Payload &amp; Context Caching</strong></td>
+            <td><code>74650 B</code> fragmented across 18 turns</td>
+            <td><code>16089 B</code> in 1 contiguous JSON block</td>
+            <td><span class="badge badge-ok">100% single-turn KV-cache hit</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>2. Latent Binary Hazards Automatically Uncovered &amp; Eliminated (4 Found)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Procedure</th>
+            <th>Hazard Category</th>
+            <th>Severity</th>
+            <th>Instruction / P-Code Site</th>
+            <th>Safe Rust Remediation</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+        <tr>
+          <td><span class="badge badge-warn">argon_keystream_round</span></td>
+          <td><code>potential_integer_overflow_to_pointer</code></td>
+          <td><span class="severity severity-high">HIGH</span></td>
+          <td><code>0x1130: imul eax, eax, 0x85ebca6b</code></td>
+          <td>32-bit integer multiplication/shift in a procedure with 64-bit sign-extension or pointer indexing can wrap before offset calculation; promote to usize/u64 and use checked_mul in Safe Rust.</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-warn">argon_tag_finalize</span></td>
+          <td><code>potential_integer_overflow_to_pointer</code></td>
+          <td><span class="severity severity-high">HIGH</span></td>
+          <td><code>0x1151: imul esi, esi, 0xc2b2ae35</code></td>
+          <td>32-bit integer multiplication/shift in a procedure with 64-bit sign-extension or pointer indexing can wrap before offset calculation; promote to usize/u64 and use checked_mul in Safe Rust.</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-warn">argon_tag_finalize</span></td>
+          <td><code>unchecked_division</code></td>
+          <td><span class="severity severity-high">HIGH</span></td>
+          <td><code>0x1159: div edi</code></td>
+          <td>Hardware division instruction without an adjacent zero-divisor check; use checked_div / checked_rem or explicit zero guards in Safe Rust.</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-warn">argon_tag_finalize</span></td>
+          <td><code>thread_hostile_mutable_global</code></td>
+          <td><span class="severity severity-medium">MEDIUM</span></td>
+          <td><code>0x1172: mov DWORD PTR [rip+0x2e94], eax</code></td>
+          <td>Instruction mutates process-global state in a writable data/BSS section without synchronization; move state into an explicit context struct or Atomic/Mutex in Safe Rust.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>3. Closed-Loop Self-Healing Rust Verification (<code>verify_rust_parity</code>)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Verification Phase</th>
+            <th>Verdict</th>
+            <th>Safety &amp; Sandbox</th>
+            <th>Counterexample Shrinker &amp; Benchmark Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Attempt 1: Mutated Candidate</strong><br/><span class="kpi-sub">1-bit mask divergence on threshold branch</span></td>
+            <td><span class="badge badge-warn">diverged</span></td>
+            <td><code>linux-bwrap+prlimit</code><br/><code>#![forbid(unsafe_code)]</code></td>
+            <td>
+              Shrunk failing input <code>[4096, 4096, 4096]</code> →
+              <strong><code>[1024, 4096, 2]</code></strong>
+              in <code>13</code> binary-search steps (1286.1 ms)<br/>
+              <code>XOR diff = 0x2000 (1 bit(s) differ, lowest bit = 13, highest bit = 13); C returned 0xab1f5326 (2870956838), Rust returned 0xab1f7326 (2870965030)</code>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Attempt 2: Self-Healed Safe Rust</strong><br/><span class="kpi-sub">Guided by shrunk counterexample</span></td>
+            <td><span class="badge badge-ok">verified_bit_exact</span></td>
+            <td><code>linux-bwrap+prlimit</code><br/><code>#![forbid(unsafe_code)]</code> (0 unsafe blocks)</td>
+            <td>
+              <strong><code>10,064 / 10,064</code></strong> FFI inputs verified bit-exact (564.87 ms)<br/>
+              In-process 100k-call benchmark: <strong><code>2.41x</code> speedup</strong> over C shared library (<code>12.7924 ns</code> → <code>5.2991 ns</code>)
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

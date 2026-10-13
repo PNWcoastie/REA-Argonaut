@@ -36,6 +36,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../../domain/relationshipCoverage.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { Logger } from "pino";
+import { RustCppBinaryInspector } from "../rustCpp/RustCppBinaryInspector.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -215,6 +216,7 @@ interface BinaryAnalysisModel {
   readonly architecture: string;
   readonly segments: readonly ParsedSegment[];
   readonly symbolsByAddr: Map<bigint, ParsedSymbol>;
+  readonly rttiAnnotationsByAddr: Map<bigint, string>;
   readonly proceduresByAddr: Map<bigint, ParsedProcedure>;
   readonly sortedProcedures: readonly ParsedProcedure[];
   readonly strings: readonly ParsedString[];
@@ -643,16 +645,18 @@ class ZeroInstallSession {
 
       case "list_procedures":
         return ok(
-          model.sortedProcedures.map((proc) => ({
-            address: toHex(proc.address),
-            value: proc.name,
-            procedure: {
-              external: proc.external,
-              thunk: proc.thunk,
-              thunk_target:
-                proc.thunkTarget === null ? null : toHex(proc.thunkTarget),
-            },
-          })),
+          model.sortedProcedures
+            .filter((proc) => !proc.name.startsWith("."))
+            .map((proc) => ({
+              address: toHex(proc.address),
+              value: proc.name,
+              procedure: {
+                external: proc.external,
+                thunk: proc.thunk,
+                thunk_target:
+                  proc.thunkTarget === null ? null : toHex(proc.thunkTarget),
+              },
+            })),
         );
 
       case "search_procedures": {
@@ -684,7 +688,7 @@ class ZeroInstallSession {
         if (!matcher.ok) return matcher;
         return ok(
           model.sortedProcedures
-            .filter((proc) => matcher.value(proc.name))
+            .filter((proc) => !proc.name.startsWith(".") && matcher.value(proc.name))
             .map((proc) => ({
               address: toHex(proc.address),
               value: proc.name,
@@ -875,14 +879,15 @@ class ZeroInstallSession {
         if (!proc.ok) return proc;
         const p = proc.value;
         const blocks = this.#computeBasicBlocks(p);
+        const wordType = model.is64Bit ? "int64_t" : "int32_t";
         return ok({
           name: p.name,
           entrypoint: toHex(p.address),
           basicblock_count: blocks.length,
           length: p.size,
-          signature: this.#formatSignature(p),
+          signature: this.#formatSignature(p, model),
           locals: p.localDisplacements.map((disp) => ({
-            description: `int64_t local_${Math.abs(disp).toString(16)} /* [bp${disp < 0 ? disp : `+${disp}`}] */`,
+            description: `${wordType} local_${Math.abs(disp).toString(16)} /* [bp${disp < 0 ? disp : `+${disp}`}] */`,
             provenance: "ghidra-function-database",
           })),
           classification: {
@@ -1108,7 +1113,11 @@ class ZeroInstallSession {
       case "comment": {
         const addr = this.#requireAddress(operation, parameters.address);
         if (!addr.ok) return addr;
-        return ok(this.#comments.get(toHex(addr.value)) ?? null);
+        return ok(
+          this.#comments.get(toHex(addr.value)) ??
+            model.rttiAnnotationsByAddr.get(addr.value) ??
+            null,
+        );
       }
 
       case "set_comment": {
@@ -1276,7 +1285,11 @@ class ZeroInstallSession {
         ]),
       );
     }
-    const byAddr = parseAddressString(selector);
+    const subMatch = /^sub_(?:0x)?([0-9a-fA-F]+)$/iu.exec(selector);
+    const byAddr =
+      subMatch !== null
+        ? parseAddressString(`0x${subMatch[1]!}`)
+        : parseAddressString(selector);
     if (byAddr !== null) {
       const exact = model.proceduresByAddr.get(byAddr);
       if (exact !== undefined) {
@@ -1402,8 +1415,9 @@ class ZeroInstallSession {
     };
   }
 
-  #formatSignature(proc: ParsedProcedure): string {
-    return `int64_t ${proc.name}(int64_t arg0, int64_t arg1, int64_t arg2, int64_t arg3)`;
+  #formatSignature(proc: ParsedProcedure, model?: BinaryAnalysisModel): string {
+    const wordType = model?.is64Bit === false ? "int32_t" : "int64_t";
+    return `${wordType} ${proc.name}(${wordType} arg0, ${wordType} arg1, ${wordType} arg2, ${wordType} arg3)`;
   }
 
   #formatAssemblyLines(proc: ParsedProcedure): string[] {
@@ -1502,10 +1516,15 @@ class ZeroInstallSession {
     proc: ParsedProcedure,
     model: BinaryAnalysisModel,
   ): string {
+    const wordType = model.is64Bit ? "int64_t" : "int32_t";
     const lines: string[] = [];
-    lines.push(`${this.#formatSignature(proc)} {`);
+    const rttiNote = model.rttiAnnotationsByAddr.get(proc.address);
+    if (rttiNote !== undefined) {
+      lines.push(`// [ArgonZeroG RTTI Seed] ${rttiNote}`);
+    }
+    lines.push(`${this.#formatSignature(proc, model)} {`);
     for (const disp of proc.localDisplacements) {
-      lines.push(`  int64_t local_${Math.abs(disp).toString(16)} = 0;`);
+      lines.push(`  ${wordType} local_${Math.abs(disp).toString(16)} = 0;`);
     }
     const stringByAddr = new Map(model.strings.map((s) => [s.address, s.value]));
     for (const ins of proc.instructions) {
@@ -1529,9 +1548,16 @@ class ZeroInstallSession {
           `  if (${m}_cond) goto loc_${ins.targetAddress.toString(16)}; // @ ${toHex(ins.address)}`,
         );
       } else if (ins.isJump && ins.targetAddress !== null) {
-        lines.push(
-          `  goto loc_${ins.targetAddress.toString(16)}; // @ ${toHex(ins.address)}`,
-        );
+        const tailTarget = model.proceduresByAddr.get(ins.targetAddress);
+        if (tailTarget !== undefined && tailTarget.address !== proc.address) {
+          lines.push(
+            `  return ${tailTarget.name}(); // tailcall @ ${toHex(ins.address)}`,
+          );
+        } else {
+          lines.push(
+            `  goto loc_${ins.targetAddress.toString(16)}; // @ ${toHex(ins.address)}`,
+          );
+        }
       } else if (
         ins.targetAddress !== null &&
         stringByAddr.has(ins.targetAddress)
@@ -1672,7 +1698,9 @@ class ZeroInstallSession {
       readonly text: string;
     }> = [];
     const entryHex = toHex(proc.address);
-    const entryComment = this.#comments.get(entryHex);
+    const entryComment =
+      this.#comments.get(entryHex) ??
+      model.rttiAnnotationsByAddr.get(proc.address);
     if (entryComment !== undefined) {
       comments.push({ address: entryHex, kind: "comment", text: entryComment });
     }
@@ -1733,12 +1761,13 @@ class ZeroInstallSession {
       }
     }
 
+    const wordType = model.is64Bit ? "int64_t" : "int32_t";
     return {
       procedure: {
         ...this.#formatProcedureIdentity(proc),
-        signature: this.#formatSignature(proc),
+        signature: this.#formatSignature(proc, model),
         locals: proc.localDisplacements.map((disp) => ({
-          description: `int64_t local_${Math.abs(disp).toString(16)} /* [bp${disp < 0 ? disp : `+${disp}`}] */`,
+          description: `${wordType} local_${Math.abs(disp).toString(16)} /* [bp${disp < 0 ? disp : `+${disp}`}] */`,
           provenance: "ghidra-function-database",
         })),
       },
@@ -1779,7 +1808,7 @@ class ZeroInstallSession {
     }
     const rootRes = this.#resolveProcedureSelector(
       operation,
-      parameters.procedure,
+      parameters.procedure ?? parameters.entry,
       model,
     );
     if (!rootRes.ok) return rootRes;
@@ -1908,12 +1937,13 @@ class ZeroInstallSession {
       }
 
       const inferredOffsets = this.#extractInferredStructOffsets(proc);
+      const latentHazards = this.#extractLatentBinaryHazards(proc, model);
 
       nodes.push({
         procedure: {
           address: procHex,
           name: proc.name,
-          signature: this.#formatSignature(proc),
+          signature: this.#formatSignature(proc, model),
         },
         depth: curr.depth,
         pseudocode: this.#synthesizePseudoCode(proc, model),
@@ -1922,6 +1952,7 @@ class ZeroInstallSession {
         callees,
         referenced_strings: nodeStrings,
         inferred_struct_offsets: inferredOffsets,
+        latent_hazards: latentHazards,
       });
 
       const nextItems: Array<{ readonly proc: ParsedProcedure; readonly depth: number }> = [];
@@ -1967,6 +1998,11 @@ class ZeroInstallSession {
       }
     }
 
+    const totalLatentHazards = nodes.reduce((sum, n) => {
+      const h = n.latent_hazards;
+      return sum + (Array.isArray(h) ? h.length : 0);
+    }, 0);
+
     const aggregatedStrings = [...aggregatedStringValues.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([address, value]) => ({
@@ -1979,12 +2015,13 @@ class ZeroInstallSession {
       root_procedure: {
         address: toHex(rootProc.address),
         name: rootProc.name,
-        signature: this.#formatSignature(rootProc),
+        signature: this.#formatSignature(rootProc, model),
       },
       traversal,
       max_depth: maxDepth,
       max_nodes: maxNodes,
       node_count: nodes.length,
+      total_latent_hazards: totalLatentHazards,
       truncated,
       cycle_edges: cycleEdges,
       nodes,
@@ -1992,6 +2029,239 @@ class ZeroInstallSession {
       aggregated_strings: aggregatedStrings,
       limitations: [...BASE_LIMITATIONS],
     });
+  }
+
+  #extractLatentBinaryHazards(
+    proc: ParsedProcedure,
+    model: BinaryAnalysisModel,
+  ): Array<Readonly<Record<string, JsonValue>>> {
+    const hazards = new Map<string, Readonly<Record<string, JsonValue>>>();
+    const recordHazard = (
+      category:
+        | "potential_integer_overflow_to_pointer"
+        | "unchecked_division"
+        | "thread_hostile_mutable_global"
+        | "unsafe_memory_sink"
+        | "uninitialized_or_stack_hazard",
+      severity: "high" | "medium" | "low",
+      address: string,
+      instructionOrOp: string,
+      description: string,
+    ) => {
+      const key = `${category}:${address}`;
+      if (!hazards.has(key)) {
+        hazards.set(key, {
+          category,
+          severity,
+          address,
+          instruction_or_op: instructionOrOp,
+          description,
+        });
+      }
+    };
+
+    const unsafeSinks = new Set([
+      "strcpy",
+      "strcat",
+      "sprintf",
+      "vsprintf",
+      "gets",
+      "scanf",
+      "__isoc99_scanf",
+      "system",
+      "popen",
+    ]);
+
+    const writableSegments = model.segments.filter((s) => s.writable);
+    const isWritableGlobalAddr = (addr: bigint): boolean =>
+      writableSegments.some((s) => addr >= s.start && addr < s.end);
+
+    const hasSignExtOrArrayIndex = proc.instructions.some((ins) => {
+      const m = ins.mnemonic.toLowerCase();
+      if (
+        m === "movsxd" ||
+        m === "movslq" ||
+        m === "cdqe" ||
+        m === "cltq" ||
+        m === "sxtw"
+      ) {
+        return true;
+      }
+      return ins.operands.some((op) => /\[.*[+*].*\]|\(.*,.*,.*\)/u.test(op));
+    });
+
+    for (let i = 0; i < proc.instructions.length; i++) {
+      const ins = proc.instructions[i]!;
+      const m = ins.mnemonic.toLowerCase();
+      const addrHex = toHex(ins.address);
+      const opsJoined = ins.operands.join(", ");
+      const rendered = `${addrHex}: ${ins.mnemonic}${opsJoined.length > 0 ? ` ${opsJoined}` : ""}`;
+      const lowerOps = opsJoined.toLowerCase();
+
+      // 1. potential_integer_overflow_to_pointer
+      const is32BitRegMention =
+        /\b(?:e[abcd]x|e[sd]i|r(?:8|9|1[0-5])d|w\d+)\b/u.test(lowerOps);
+      if (
+        (m.startsWith("imul") ||
+          m.startsWith("mul") ||
+          m === "madd" ||
+          (m.startsWith("shl") && hasSignExtOrArrayIndex)) &&
+        (is32BitRegMention || hasSignExtOrArrayIndex)
+      ) {
+        recordHazard(
+          "potential_integer_overflow_to_pointer",
+          "high",
+          addrHex,
+          rendered,
+          "32-bit integer multiplication/shift in a procedure with 64-bit sign-extension or pointer indexing can wrap before offset calculation; promote to usize/u64 and use checked_mul in Safe Rust.",
+        );
+      }
+
+      // 2. unchecked_division
+      if (
+        m === "div" ||
+        m === "idiv" ||
+        m === "divl" ||
+        m === "idivl" ||
+        m === "divq" ||
+        m === "idivq" ||
+        m === "udiv" ||
+        m === "sdiv" ||
+        m === "divss" ||
+        m === "divsd" ||
+        m === "fdiv"
+      ) {
+        let guarded = false;
+        for (let back = Math.max(0, i - 4); back < i; back++) {
+          const prevM = proc.instructions[back]!.mnemonic.toLowerCase();
+          if (
+            prevM.startsWith("test") ||
+            prevM.startsWith("cmp") ||
+            prevM.startsWith("cbz") ||
+            prevM.startsWith("cbnz") ||
+            prevM.startsWith("ucomi")
+          ) {
+            guarded = true;
+            break;
+          }
+        }
+        if (!guarded) {
+          recordHazard(
+            "unchecked_division",
+            "high",
+            addrHex,
+            rendered,
+            "Hardware division instruction without an adjacent zero-divisor check; use checked_div / checked_rem or explicit zero guards in Safe Rust.",
+          );
+        }
+      }
+
+      // 3. thread_hostile_mutable_global
+      const firstOpLower = (ins.operands[0] ?? "").toLowerCase();
+      const lastOpLower = (
+        ins.operands[ins.operands.length - 1] ?? ""
+      ).toLowerCase();
+      const isMutatingMnem =
+        m.startsWith("mov") ||
+        m.startsWith("add") ||
+        m.startsWith("sub") ||
+        m.startsWith("xor") ||
+        m.startsWith("or") ||
+        m.startsWith("and") ||
+        m.startsWith("inc") ||
+        m.startsWith("dec") ||
+        m.startsWith("str") ||
+        m.startsWith("xchg") ||
+        m.startsWith("cmpxchg");
+      const writesRipRelativeIntel =
+        isMutatingMnem &&
+        !m.startsWith("lea") &&
+        firstOpLower.includes("rip") &&
+        firstOpLower.includes("[");
+      const writesRipRelativeAtt =
+        isMutatingMnem &&
+        !m.startsWith("lea") &&
+        ins.operands.length >= 2 &&
+        lastOpLower.includes("(%rip)");
+      const writesGlobalTarget =
+        isMutatingMnem &&
+        !m.startsWith("lea") &&
+        ins.targetAddress !== null &&
+        isWritableGlobalAddr(ins.targetAddress) &&
+        (firstOpLower.includes("rip") ||
+          lastOpLower.includes("(%rip)") ||
+          m.startsWith("add") ||
+          m.startsWith("sub") ||
+          m.startsWith("xor") ||
+          m.startsWith("or") ||
+          m.startsWith("and") ||
+          m.startsWith("inc") ||
+          m.startsWith("dec") ||
+          m.startsWith("str") ||
+          (m.startsWith("mov") &&
+            (firstOpLower.includes("[") || lastOpLower.includes("(%rip)"))));
+
+      if (writesRipRelativeIntel || writesRipRelativeAtt || writesGlobalTarget) {
+        recordHazard(
+          "thread_hostile_mutable_global",
+          "medium",
+          addrHex,
+          rendered,
+          "Instruction mutates process-global state in a writable data/BSS section without synchronization; move state into an explicit context struct or Atomic/Mutex in Safe Rust.",
+        );
+      }
+
+      // 4. unsafe_memory_sink
+      if (ins.isCall && ins.targetAddress !== null) {
+        const rawCallee =
+          model.proceduresByAddr.get(ins.targetAddress)?.name ??
+          model.symbolsByAddr.get(ins.targetAddress)?.name ??
+          "";
+        const cleanCallee = rawCallee
+          .replace(/^_+/u, "")
+          .replace(/@plt$/u, "")
+          .toLowerCase();
+        if (unsafeSinks.has(cleanCallee)) {
+          recordHazard(
+            "unsafe_memory_sink",
+            "high",
+            addrHex,
+            rendered,
+            `Calls unbounded C sink '${cleanCallee}'; replace with bounds-checked Rust slice/String formatting.`,
+          );
+        }
+      }
+
+      // 5. uninitialized_or_stack_hazard
+      if (
+        m.startsWith("sub") &&
+        (firstOpLower === "rsp" ||
+          firstOpLower === "%rsp" ||
+          lastOpLower === "%rsp" ||
+          firstOpLower === "sp")
+      ) {
+        for (const op of ins.operands) {
+          const immMatch = op.match(/(?:0x([0-9a-fA-F]+)|(\d+))$/u);
+          if (immMatch !== null) {
+            const val =
+              immMatch[1] !== undefined
+                ? Number.parseInt(immMatch[1], 16)
+                : Number.parseInt(immMatch[2]!, 10);
+            if (!Number.isNaN(val) && val >= 4096) {
+              recordHazard(
+                "uninitialized_or_stack_hazard",
+                "medium",
+                addrHex,
+                rendered,
+                `Large stack frame allocation (${val} bytes); prefer heap-allocated Vec or bounded buffers in Safe Rust.`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    return [...hazards.values()];
   }
 
   #extractInferredStructOffsets(
@@ -2528,6 +2798,15 @@ async function buildBinaryAnalysisModel(
     logger,
   );
 
+  // Automatically seed C++ RTTI vtable methods & demangled symbols when present
+  const rttiAnnotationsByAddr = new Map<bigint, string>();
+  await enrichWithRustCppRttiAndSymbols(
+    target.path,
+    parsedFormat,
+    rttiAnnotationsByAddr,
+    logger,
+  );
+
   // Ensure all executable sections have decoded instructions (fallback bytecode decoder)
   if (parsedFormat.instructionsByAddr.size === 0) {
     decodeExecutableSectionsBuiltin(bytes, parsedFormat);
@@ -2554,6 +2833,7 @@ async function buildBinaryAnalysisModel(
     architecture: parsedFormat.architecture,
     segments: parsedFormat.segments,
     symbolsByAddr: parsedFormat.symbolsByAddr,
+    rttiAnnotationsByAddr,
     proceduresByAddr,
     sortedProcedures,
     strings,
@@ -2561,6 +2841,82 @@ async function buildBinaryAnalysisModel(
     incomingRefsByTarget,
     outgoingRefsBySource,
   };
+}
+
+async function enrichWithRustCppRttiAndSymbols(
+  targetPath: string,
+  parsed: MutableContainerParse,
+  rttiAnnotationsByAddr: Map<bigint, string>,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const rustCppResult = await new RustCppBinaryInspector().inspect({
+      path: targetPath,
+      max_panic_locations: 100,
+      max_symbols: 500,
+    });
+    if (!rustCppResult.ok) return;
+    const report = rustCppResult.value;
+    for (const cls of report.cpp.classes) {
+      const cleanClassName = cls.class_name
+        .replace(/^class\s+|^struct\s+/iu, "")
+        .replace(/[^A-Za-z0-9_]/gu, "_")
+        .replace(/_+/gu, "_")
+        .replace(/^_+|_+$/gu, "");
+      if (cleanClassName.length === 0) continue;
+      const baseSuffix =
+        cls.base_classes.length > 0
+          ? ` : ${cls.base_classes.join(", ")}`
+          : "";
+      for (const vm of cls.virtual_methods) {
+        const vmAddr = parseAddressString(vm.address);
+        if (vmAddr === null || vmAddr <= 0n) continue;
+        const hexSuffix = vmAddr.toString(16).toLowerCase();
+        const synthName = `${cleanClassName}__vslot_${vm.slot}_${hexSuffix}`;
+        const annotation = `C++ RTTI VTable Slot #${vm.slot} of ${cls.class_name}${baseSuffix} (vtable @ ${cls.vtable_address ?? "unknown"})`;
+        if (!rttiAnnotationsByAddr.has(vmAddr)) {
+          rttiAnnotationsByAddr.set(vmAddr, annotation);
+        }
+        parsed.functionStartHints.add(vmAddr);
+        const existingSym = parsed.symbolsByAddr.get(vmAddr);
+        if (
+          existingSym === undefined ||
+          existingSym.name.startsWith("sub_") ||
+          existingSym.name.startsWith(".")
+        ) {
+          parsed.symbolsByAddr.set(vmAddr, {
+            address: vmAddr,
+            name: synthName,
+            size: existingSym?.size ?? 0,
+            isFunction: true,
+            external: false,
+            dynamic: false,
+            thunk: false,
+            thunkTarget: null,
+            source: "analysis",
+          });
+        }
+      }
+    }
+    for (const dem of [
+      ...report.rust.demangled_symbols,
+      ...report.cpp.demangled_symbols,
+    ]) {
+      for (const [symAddr, sym] of parsed.symbolsByAddr.entries()) {
+        if (
+          sym.name === dem.mangled &&
+          !rttiAnnotationsByAddr.has(symAddr)
+        ) {
+          rttiAnnotationsByAddr.set(
+            symAddr,
+            `Demangled (${dem.encoding}): ${dem.demangled}`,
+          );
+        }
+      }
+    }
+  } catch (cause: unknown) {
+    logger.debug({ cause }, "Rust/C++ RTTI symbol seeding skipped");
+  }
 }
 
 interface MutableContainerParse {
@@ -2820,7 +3176,7 @@ function parseElfContainer(
         is64Bit ? readU64(symOff + 16) : BigInt(readU32(symOff + 8)),
       );
       const name = readCString(strSec.shOffset, strSec.shSize, stName);
-      if (!name || stValue === 0n) continue;
+      if (!name || stValue === 0n || name.startsWith(".")) continue;
       const stType = stInfo & 0xf;
       const isFunc = stType === 2;
       const isExternal = stShndx === 0;
@@ -3207,6 +3563,7 @@ async function enrichWithHostCliTools(
             platform === "darwin" && rawName.startsWith("_")
               ? rawName.slice(1)
               : rawName;
+          if (cleanName.startsWith(".")) continue;
           const isFunc = code === "T" || code === "t" || code === "W" || code === "w";
           if (!parsed.symbolsByAddr.has(addr)) {
             parsed.symbolsByAddr.set(addr, {
@@ -3278,6 +3635,7 @@ function parseObjdumpDisassembly(
     if (headerMatch !== null) {
       const fnAddr = BigInt(`0x${headerMatch[1]!}`);
       const fnName = headerMatch[2]!.replace(/@plt$/u, "");
+      if (fnName.startsWith(".")) continue;
       parsed.functionStartHints.add(fnAddr);
       if (!parsed.symbolsByAddr.has(fnAddr)) {
         parsed.symbolsByAddr.set(fnAddr, {
@@ -3667,8 +4025,12 @@ function buildProceduresAndReferences(
     const prevMnem = sortedInsns[i - 1]?.mnemonic;
     if (
       ins.mnemonic === "endbr64" ||
+      ins.mnemonic === "endbr32" ||
       (ins.mnemonic === "push" &&
-        (ins.operands[0] === "rbp" || ins.operands[0] === "%rbp") &&
+        (ins.operands[0] === "rbp" ||
+          ins.operands[0] === "%rbp" ||
+          ins.operands[0] === "ebp" ||
+          ins.operands[0] === "%ebp") &&
         prevMnem !== "endbr64" &&
         prevMnem !== "endbr32" &&
         sortedInsns[i + 1]?.mnemonic.startsWith("mov") === true)
@@ -3708,8 +4070,10 @@ function buildProceduresAndReferences(
     const start = validStarts[i]!;
     const nextStart = validStarts[i + 1];
     const sym = parsed.symbolsByAddr.get(start);
+    const validSymName =
+      sym !== undefined && !sym.name.startsWith(".") ? sym.name : undefined;
     const name =
-      sym?.name ??
+      validSymName ??
       (start === parsed.entryPoint ? "_start" : `sub_${start.toString(16)}`);
     if (sym === undefined) {
       parsed.symbolsByAddr.set(start, {
@@ -3811,10 +4175,16 @@ function buildProceduresAndReferences(
       const target = ins.targetAddress;
       const isData = !ins.isCall && !ins.isJump && (stringAddrs.has(target) || parsed.symbolsByAddr.has(target));
       if (!ins.isCall && !ins.isJump && !isData) continue;
+      const calleeProc = proceduresByAddr.get(target);
+      const isCrossProcJump =
+        ins.isJump &&
+        calleeProc !== undefined &&
+        calleeProc.address !== proc.address;
+      const isEffectiveCall = ins.isCall || isCrossProcJump;
       const refObj = {
         sourceAddr: ins.address,
         targetAddr: target,
-        isCall: ins.isCall,
+        isCall: isEffectiveCall,
         isJump: ins.isJump,
         isData,
         isConditional: ins.isConditionalJump,
@@ -3827,12 +4197,9 @@ function buildProceduresAndReferences(
       outList.push(refObj);
       outgoingRefsBySource.set(ins.address, outList);
 
-      if (ins.isCall) {
-        const calleeProc = proceduresByAddr.get(target);
-        if (calleeProc !== undefined) {
-          proc.callees.add(target);
-          calleeProc.callers.add(proc.address);
-        }
+      if (isEffectiveCall && calleeProc !== undefined) {
+        proc.callees.add(target);
+        calleeProc.callers.add(proc.address);
       }
     }
   }

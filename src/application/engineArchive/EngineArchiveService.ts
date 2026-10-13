@@ -68,7 +68,16 @@ export class EngineArchiveService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: {
+            path: input.data.path,
+            max_types: input.data.max_types,
+            max_methods: input.data.max_methods,
+            max_strings: input.data.max_strings,
+            max_files: input.data.max_files,
+            ...(input.data.max_entries !== undefined
+              ? { max_entries: input.data.max_entries }
+              : {}),
+          },
           result: value,
           confidence: "observed",
           limitations: [],

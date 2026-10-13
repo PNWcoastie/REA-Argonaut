@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Session-owned extension loading; analyzer algorithms stay behind each adapter ABI. */
+@SuppressWarnings("try")
 final class ReaGhidraExtensions implements AutoCloseable {
     private record Loaded(URLClassLoader loader, Object instance, String sha256) {}
     private final List<Loaded> loaded = new ArrayList<>();
@@ -101,11 +102,11 @@ final class ReaGhidraExtensions implements AutoCloseable {
         report.add("result", result);
     }
 
-    @Override public void close() throws Exception {
-        Exception failure = null;
+    @Override public void close() throws java.io.IOException {
+        java.io.IOException failure = null;
         for (Loaded extension : loaded) {
             try { extension.loader.close(); }
-            catch (Exception ex) { if (failure == null) failure = ex; else failure.addSuppressed(ex); }
+            catch (java.io.IOException ex) { if (failure == null) failure = ex; else failure.addSuppressed(ex); }
         }
         loaded.clear();
         if (failure != null) throw failure;
