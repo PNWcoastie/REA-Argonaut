@@ -173,6 +173,12 @@ export const limitationsFor = (operation: string): readonly string[] => {
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
         "The Java bridge serializes one function request per Program and lets each decompilation run until it completes or the caller cancels.",
       ];
+    case "decompile_subgraph":
+      return [
+        ...common,
+        "Subgraph traversal follows resolved Ghidra call references up to max_depth and max_nodes; recursive cycles are recorded in cycle_edges without re-decompiling visited procedures.",
+        "Inferred struct offsets are extracted from HighFunction P-Code pointer arithmetic (PTRSUB, PTRADD, LOAD, STORE) and instruction memory displacements.",
+      ];
     default:
       return common;
   }

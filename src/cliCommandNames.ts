@@ -25,6 +25,7 @@ export const CLI_COMMANDS = Object.freeze({
   providers: "providers",
   function: "function",
   annotateNativeFunction: "annotate-native-function",
+  decompileSubgraph: "decompile-subgraph",
   inspectNativeApi: "inspect-native-api",
   instructions: "instructions",
   search: "search",
@@ -46,6 +47,8 @@ export const CLI_COMMANDS = Object.freeze({
   inspectRecordedCrash: "inspect-recorded-crash",
   inspectBinaryLayout: "inspect-binary-layout",
   inspectGoBinary: "inspect-go-binary",
+  inspectRustCppBinary: "inspect-rust-cpp-binary",
+  inspectPythonFrozenBinary: "inspect-python-frozen-binary",
   inspectPeResources: "inspect-pe-resources",
   inspectAnalysisView: "inspect-analysis-view",
   listFridaDevices: "list-frida-devices",
@@ -144,7 +147,11 @@ export const CLI_COMMANDS = Object.freeze({
 export const CLI_COMMAND_NAMES = Object.freeze(Object.values(CLI_COMMANDS));
 
 /** Command aliases registered on top of the primary CLI command inventory. */
-export const CLI_COMMAND_ALIASES = Object.freeze(["compare-bundles"]);
+export const CLI_COMMAND_ALIASES = Object.freeze([
+  "compare-bundles",
+  "inspect-rust-cpp",
+  "inspect-python-frozen",
+]);
 
 /** Canonical MCP operations reached by CLI commands with different names. */
 export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
@@ -157,6 +164,8 @@ export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   search: ["search_strings", "search_procedures"],
   "capture-process": ["capture_process_scenario"],
   "compare-bundles": ["compare_bundles"],
+  "inspect-rust-cpp": ["inspect_rust_cpp_binary"],
+  "inspect-python-frozen": ["inspect_python_frozen_binary"],
   "list-frida-devices": ["list_frida_devices"],
   "list-frida-processes": ["list_frida_processes"],
   "instrument-with-frida": ["instrument_with_frida"],

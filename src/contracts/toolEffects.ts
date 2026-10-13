@@ -54,6 +54,9 @@ const sessionEvidence = effects({ mutatesSession: true });
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_go_binary: evidence,
+  inspect_rust_cpp_binary: evidence,
+  inspect_python_frozen_binary: evidence,
+  decompile_subgraph: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
     writesFilesystem: true,

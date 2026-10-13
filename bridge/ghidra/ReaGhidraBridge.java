@@ -22,6 +22,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -141,6 +142,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "search_procedures",
         "search_strings",
         "analyze_function",
+        "decompile_subgraph",
         "procedure_assembly",
         "procedure_callees",
         "procedure_callers",
@@ -389,6 +391,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 FunctionAnalysisObservation observation = analyzeFunctionObservation(request.params);
                 yield functionObservation(observation.dossier(), observation.limitations());
             }
+            case "decompile_subgraph" -> decompileSubgraph(request.params);
             case "set_address_name", "set_addresses_names" -> {
                 if (!descriptor.transport.equals("unix-socket"))
                     throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
@@ -1262,6 +1265,420 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("limitations", limitations);
         return new FunctionAnalysisObservation(result, boundaryLimitations);
+    }
+
+    private record SubgraphQueueItem(Function function, int depth) {}
+
+    private static final class InferredOffsetEntry {
+        final String base;
+        final long offset;
+        int size;
+        boolean hasRead;
+        boolean hasWrite;
+        boolean hasAddress;
+        String fieldName;
+
+        InferredOffsetEntry(String base, long offset, int size, String access, String fieldName) {
+            this.base = base;
+            this.offset = offset;
+            this.size = Math.max(0, size);
+            mergeAccess(access);
+            this.fieldName = fieldName;
+        }
+
+        void mergeAccess(String access) {
+            if ("read".equals(access)) this.hasRead = true;
+            else if ("write".equals(access)) this.hasWrite = true;
+            else if ("read_write".equals(access)) {
+                this.hasRead = true;
+                this.hasWrite = true;
+            } else {
+                this.hasAddress = true;
+            }
+        }
+
+        String accessString() {
+            if (hasRead && hasWrite) return "read_write";
+            if (hasRead) return "read";
+            if (hasWrite) return "write";
+            return "address";
+        }
+
+        String offsetHex() {
+            return offset < 0
+                ? "-0x" + Long.toHexString(-offset)
+                : "+0x" + Long.toHexString(offset);
+        }
+    }
+
+    private JsonObject decompileSubgraph(JsonObject params) throws Exception {
+        Set<String> allowedKeys = Set.of(
+            "document",
+            "procedure",
+            "max_depth",
+            "max_nodes",
+            "traversal",
+            "include_assembly"
+        );
+        for (String key : params.keySet()) {
+            if (!allowedKeys.contains(key)) {
+                throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+            }
+        }
+        requireDocument(params);
+        Function rootFn = resolveProcedure(requireString(params, "procedure"));
+        int maxDepth = params.has("max_depth") && !params.get("max_depth").isJsonNull()
+            ? requireBoundedInteger(params, "max_depth", 0, 10)
+            : 2;
+        int maxNodes = params.has("max_nodes") && !params.get("max_nodes").isJsonNull()
+            ? requireBoundedInteger(params, "max_nodes", 1, 100)
+            : 25;
+        String traversal = params.has("traversal") && !params.get("traversal").isJsonNull()
+            ? requireString(params, "traversal")
+            : "bfs";
+        if (!traversal.equals("bfs") && !traversal.equals("dfs")) {
+            throw new RequestFailure("invalid_request", "traversal must be bfs or dfs");
+        }
+        boolean includeAssembly = params.has("include_assembly") && !params.get("include_assembly").isJsonNull()
+            ? requireBoolean(params, "include_assembly")
+            : true;
+
+        ArrayDeque<SubgraphQueueItem> queue = new ArrayDeque<>();
+        Set<Address> visited = new HashSet<>();
+        Set<Address> scheduled = new HashSet<>();
+        queue.addLast(new SubgraphQueueItem(rootFn, 0));
+        scheduled.add(rootFn.getEntryPoint());
+
+        JsonArray nodes = new JsonArray();
+        JsonArray edges = new JsonArray();
+        JsonArray cycleEdges = new JsonArray();
+        TreeMap<String, String> stringValuesByAddr = new TreeMap<>();
+        TreeMap<String, Set<String>> stringRefsByAddr = new TreeMap<>();
+        boolean truncated = false;
+
+        while (!queue.isEmpty()) {
+            monitor.checkCancelled();
+            SubgraphQueueItem current = traversal.equals("dfs")
+                ? queue.removeFirst()
+                : queue.removeFirst();
+            Function fn = current.function();
+            Address fnAddr = fn.getEntryPoint();
+            if (visited.contains(fnAddr)) {
+                continue;
+            }
+            if (nodes.size() >= maxNodes) {
+                truncated = true;
+                break;
+            }
+            visited.add(fnAddr);
+
+            DecompileResults decompilation = decompile(fn);
+            String pseudocode = decompiledText(decompilation);
+            if (pseudocode == null) {
+                pseudocode = "";
+            }
+            InstructionScan scan = scanInstructions(fn, Integer.MAX_VALUE);
+            JsonArray assembly = new JsonArray();
+            if (includeAssembly) {
+                for (String line : renderAssemblyLines(scan.instructions)) {
+                    assembly.add(line);
+                }
+            }
+
+            List<Function> callerList = new ArrayList<>(fn.getCallingFunctions(monitor));
+            callerList.sort(Comparator.comparing(Function::getEntryPoint));
+            JsonArray callersJson = new JsonArray();
+            for (Function caller : callerList) {
+                JsonObject ref = new JsonObject();
+                ref.addProperty("address", canonicalAddress(caller.getEntryPoint()));
+                ref.addProperty("name", procedureName(caller));
+                callersJson.add(ref);
+            }
+
+            List<Function> calleeList = new ArrayList<>(fn.getCalledFunctions(monitor));
+            calleeList.sort(Comparator.comparing(Function::getEntryPoint));
+            JsonArray calleesJson = new JsonArray();
+            for (Function callee : calleeList) {
+                JsonObject ref = new JsonObject();
+                ref.addProperty("address", canonicalAddress(callee.getEntryPoint()));
+                ref.addProperty("name", procedureName(callee));
+                calleesJson.add(ref);
+            }
+
+            List<Reference> outgoingReferences = collectReferences(fn, "outgoing");
+            JsonArray rawStrings = referencedStrings(outgoingReferences);
+            JsonArray nodeStrings = new JsonArray();
+            Set<String> seenNodeStrAddrs = new HashSet<>();
+            String fnCanonicalAddr = canonicalAddress(fnAddr);
+            for (JsonElement elem : rawStrings) {
+                JsonObject sObj = elem.getAsJsonObject();
+                String sAddr = sObj.get("address").getAsString();
+                String sVal = sObj.get("value").getAsString();
+                if (seenNodeStrAddrs.add(sAddr)) {
+                    JsonObject item = new JsonObject();
+                    item.addProperty("address", sAddr);
+                    item.addProperty("value", sVal);
+                    nodeStrings.add(item);
+                }
+                stringValuesByAddr.put(sAddr, sVal);
+                stringRefsByAddr.computeIfAbsent(sAddr, ignored -> new java.util.TreeSet<>())
+                    .add(fnCanonicalAddr);
+            }
+
+            JsonArray inferredOffsets = extractInferredStructOffsets(fn, decompilation, scan.instructions);
+
+            JsonObject procObj = new JsonObject();
+            procObj.addProperty("address", fnCanonicalAddr);
+            procObj.addProperty("name", procedureName(fn));
+            procObj.addProperty("signature", fn.getPrototypeString(false, true));
+
+            JsonObject nodeObj = new JsonObject();
+            nodeObj.add("procedure", procObj);
+            nodeObj.addProperty("depth", current.depth());
+            nodeObj.addProperty("pseudocode", pseudocode);
+            nodeObj.add("assembly", assembly);
+            nodeObj.add("callers", callersJson);
+            nodeObj.add("callees", calleesJson);
+            nodeObj.add("referenced_strings", nodeStrings);
+            nodeObj.add("inferred_struct_offsets", inferredOffsets);
+            nodes.add(nodeObj);
+
+            String fromName = procedureName(fn);
+            List<SubgraphQueueItem> toSchedule = new ArrayList<>();
+            for (Function callee : calleeList) {
+                Address calleeAddr = callee.getEntryPoint();
+                String toAddr = canonicalAddress(calleeAddr);
+                String toName = procedureName(callee);
+                if (visited.contains(calleeAddr)) {
+                    JsonObject cycle = new JsonObject();
+                    cycle.addProperty("from", fnCanonicalAddr);
+                    cycle.addProperty("from_name", fromName);
+                    cycle.addProperty("to", toAddr);
+                    cycle.addProperty("to_name", toName);
+                    cycleEdges.add(cycle);
+
+                    JsonObject edge = new JsonObject();
+                    edge.addProperty("from", fnCanonicalAddr);
+                    edge.addProperty("from_name", fromName);
+                    edge.addProperty("to", toAddr);
+                    edge.addProperty("to_name", toName);
+                    edge.addProperty("kind", "cycle_call");
+                    edges.add(edge);
+                } else {
+                    JsonObject edge = new JsonObject();
+                    edge.addProperty("from", fnCanonicalAddr);
+                    edge.addProperty("from_name", fromName);
+                    edge.addProperty("to", toAddr);
+                    edge.addProperty("to_name", toName);
+                    edge.addProperty("kind", "direct_call");
+                    edges.add(edge);
+
+                    if (current.depth() + 1 > maxDepth) {
+                        truncated = true;
+                    } else if (!scheduled.contains(calleeAddr) || traversal.equals("dfs")) {
+                        scheduled.add(calleeAddr);
+                        toSchedule.add(new SubgraphQueueItem(callee, current.depth() + 1));
+                    }
+                }
+            }
+            if (traversal.equals("dfs")) {
+                for (int i = toSchedule.size() - 1; i >= 0; i--) {
+                    queue.addFirst(toSchedule.get(i));
+                }
+            } else {
+                for (SubgraphQueueItem item : toSchedule) {
+                    queue.addLast(item);
+                }
+            }
+        }
+
+        JsonArray aggregatedStrings = new JsonArray();
+        for (Map.Entry<String, String> entry : stringValuesByAddr.entrySet()) {
+            JsonObject agg = new JsonObject();
+            agg.addProperty("address", entry.getKey());
+            agg.addProperty("value", entry.getValue());
+            JsonArray refs = new JsonArray();
+            for (String refBy : stringRefsByAddr.getOrDefault(entry.getKey(), Set.of())) {
+                refs.add(refBy);
+            }
+            agg.add("referenced_by", refs);
+            aggregatedStrings.add(agg);
+        }
+
+        JsonObject rootProc = new JsonObject();
+        rootProc.addProperty("address", canonicalAddress(rootFn.getEntryPoint()));
+        rootProc.addProperty("name", procedureName(rootFn));
+        rootProc.addProperty("signature", rootFn.getPrototypeString(false, true));
+
+        JsonArray limitations = new JsonArray();
+        limitations.add(
+            "Subgraph traversal follows resolved Ghidra call references up to max_depth and max_nodes; unresolved computed or indirect calls are not expanded."
+        );
+        limitations.add(
+            "Inferred struct offsets combine HighFunction P-Code pointer arithmetic and machine instruction displacement observations."
+        );
+
+        JsonObject result = new JsonObject();
+        result.add("root_procedure", rootProc);
+        result.addProperty("traversal", traversal);
+        result.addProperty("max_depth", maxDepth);
+        result.addProperty("max_nodes", maxNodes);
+        result.addProperty("node_count", nodes.size());
+        result.addProperty("truncated", truncated);
+        result.add("cycle_edges", cycleEdges);
+        result.add("nodes", nodes);
+        result.add("edges", edges);
+        result.add("aggregated_strings", aggregatedStrings);
+        result.add("limitations", limitations);
+        return result;
+    }
+
+    private JsonArray extractInferredStructOffsets(
+        Function function,
+        DecompileResults decompilation,
+        List<Instruction> instructions
+    ) {
+        Map<String, InferredOffsetEntry> entries = new LinkedHashMap<>();
+        HighFunction highFunction = decompilation == null ? null : decompilation.getHighFunction();
+        if (highFunction != null) {
+            Iterator<PcodeOpAST> ops = highFunction.getPcodeOps();
+            while (ops.hasNext()) {
+                PcodeOpAST op = ops.next();
+                int opcode = op.getOpcode();
+                if (opcode == PcodeOp.PTRSUB && op.getNumInputs() >= 2) {
+                    Varnode baseVn = op.getInput(0);
+                    Varnode offVn = op.getInput(1);
+                    String baseName = resolvePointerBaseName(baseVn, function);
+                    if (baseName != null && offVn != null && offVn.isConstant()) {
+                        long offset = offVn.getOffset();
+                        recordPcodePointerUse(entries, baseName, offset, op.getOutput());
+                    }
+                } else if (opcode == PcodeOp.PTRADD && op.getNumInputs() >= 3) {
+                    Varnode baseVn = op.getInput(0);
+                    Varnode idxVn = op.getInput(1);
+                    Varnode elemVn = op.getInput(2);
+                    String baseName = resolvePointerBaseName(baseVn, function);
+                    if (baseName != null && idxVn != null && idxVn.isConstant() && elemVn != null && elemVn.isConstant()) {
+                        long offset = idxVn.getOffset() * elemVn.getOffset();
+                        recordPcodePointerUse(entries, baseName, offset, op.getOutput());
+                    }
+                } else if (opcode == PcodeOp.LOAD && op.getNumInputs() >= 2) {
+                    Varnode ptrVn = op.getInput(1);
+                    String baseName = resolvePointerBaseName(ptrVn, function);
+                    if (baseName != null) {
+                        int sz = op.getOutput() != null ? op.getOutput().getSize() : 0;
+                        upsertOffsetEntry(entries, baseName, 0L, sz, "read", null);
+                    }
+                } else if (opcode == PcodeOp.STORE && op.getNumInputs() >= 3) {
+                    Varnode ptrVn = op.getInput(1);
+                    Varnode valVn = op.getInput(2);
+                    String baseName = resolvePointerBaseName(ptrVn, function);
+                    if (baseName != null) {
+                        int sz = valVn != null ? valVn.getSize() : 0;
+                        upsertOffsetEntry(entries, baseName, 0L, sz, "write", null);
+                    }
+                }
+            }
+        }
+        return serializeOffsetEntries(entries);
+    }
+
+    private String resolvePointerBaseName(Varnode vn, Function function) {
+        if (vn == null) return null;
+        if (vn instanceof VarnodeAST ast && ast.getHigh() != null) {
+            if (ast.getHigh() instanceof HighParam param) {
+                return param.getName() != null ? param.getName() : "param_" + (param.getSlot() + 1);
+            }
+            HighSymbol sym = ast.getHigh().getSymbol();
+            if (sym != null && sym.getName() != null && !sym.getName().startsWith("in_FS_")) {
+                String n = sym.getName();
+                if (!n.equalsIgnoreCase("rsp") && !n.equalsIgnoreCase("rbp") && !n.equalsIgnoreCase("esp") && !n.equalsIgnoreCase("ebp") && !n.equalsIgnoreCase("sp")) {
+                    return n;
+                }
+            }
+        }
+        if (vn.isRegister()) {
+            Register reg = currentProgram.getRegister(vn.getAddress(), vn.getSize());
+            if (reg != null) {
+                String rName = reg.getBaseRegister().getName().toLowerCase(Locale.ROOT);
+                if (!Set.of("rsp", "rbp", "esp", "ebp", "sp", "rip", "eip", "pc").contains(rName)) {
+                    return rName;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void recordPcodePointerUse(
+        Map<String, InferredOffsetEntry> entries,
+        String baseName,
+        long offset,
+        Varnode ptrOutput
+    ) {
+        if (ptrOutput == null) {
+            upsertOffsetEntry(entries, baseName, offset, 0, "address", null);
+            return;
+        }
+        boolean matchedLoadOrStore = false;
+        Iterator<PcodeOp> descendants = ptrOutput.getDescendants();
+        while (descendants != null && descendants.hasNext()) {
+            PcodeOp desc = descendants.next();
+            if (desc.getOpcode() == PcodeOp.LOAD) {
+                int sz = desc.getOutput() != null ? desc.getOutput().getSize() : 0;
+                upsertOffsetEntry(entries, baseName, offset, sz, "read", null);
+                matchedLoadOrStore = true;
+            } else if (desc.getOpcode() == PcodeOp.STORE) {
+                int sz = desc.getNumInputs() >= 3 && desc.getInput(2) != null ? desc.getInput(2).getSize() : 0;
+                upsertOffsetEntry(entries, baseName, offset, sz, "write", null);
+                matchedLoadOrStore = true;
+            }
+        }
+        if (!matchedLoadOrStore) {
+            upsertOffsetEntry(entries, baseName, offset, 0, "address", null);
+        }
+    }
+
+    private static void upsertOffsetEntry(
+        Map<String, InferredOffsetEntry> entries,
+        String base,
+        long offset,
+        int size,
+        String access,
+        String fieldName
+    ) {
+        String key = base + ":" + offset;
+        InferredOffsetEntry existing = entries.get(key);
+        if (existing == null) {
+            entries.put(key, new InferredOffsetEntry(base, offset, size, access, fieldName));
+        } else {
+            existing.mergeAccess(access);
+            if (size > existing.size) existing.size = size;
+            if (existing.fieldName == null && fieldName != null) existing.fieldName = fieldName;
+        }
+    }
+
+    private static JsonArray serializeOffsetEntries(Map<String, InferredOffsetEntry> entries) {
+        List<InferredOffsetEntry> sorted = new ArrayList<>(entries.values());
+        sorted.sort(
+            Comparator.comparing((InferredOffsetEntry e) -> e.base)
+                .thenComparingLong(e -> e.offset)
+        );
+        JsonArray result = new JsonArray();
+        for (InferredOffsetEntry entry : sorted) {
+            JsonObject obj = new JsonObject();
+            obj.addProperty("base", entry.base);
+            obj.addProperty("offset", entry.offset);
+            obj.addProperty("offset_hex", entry.offsetHex());
+            obj.addProperty("size", entry.size);
+            obj.addProperty("access", entry.accessString());
+            if (entry.fieldName == null) {
+                obj.add("field_name", JsonNull.INSTANCE);
+            } else {
+                obj.addProperty("field_name", entry.fieldName);
+            }
+            result.add(obj);
+        }
+        return result;
     }
 
     private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {

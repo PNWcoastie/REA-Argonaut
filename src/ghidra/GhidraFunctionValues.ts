@@ -25,6 +25,10 @@ import {
   type JsonValue,
 } from "../domain/jsonValue.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
+import {
+  decompileSubgraphInputSchema,
+  nativeSubgraphSchema,
+} from "../domain/native/nativeSubgraph.js";
 import { nativeValueFlowSchema } from "../domain/native/nativeValueFlow.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -44,6 +48,7 @@ export const GHIDRA_FUNCTION_OPERATIONS = [
   "inspect_native_instruction",
   "resolve_native_call_targets",
   "analyze_function",
+  "decompile_subgraph",
   "procedure_assembly",
   "procedure_callees",
   "procedure_callers",
@@ -89,6 +94,7 @@ const inputSchemas = {
     .object({ document, address: ghidraInputAddressSchema })
     .strict(),
   analyze_function: z.object({ procedure }).strict(),
+  decompile_subgraph: decompileSubgraphInputSchema,
   procedure_assembly: z.object(directProcedure).strict(),
   procedure_callees: z.object(directProcedure).strict(),
   procedure_callers: z.object(directProcedure).strict(),
@@ -374,6 +380,7 @@ const resultSchemas = {
     dossier: ghidraFunctionDossier,
   }),
   analyze_function: ghidraFunctionDossier,
+  decompile_subgraph: nativeSubgraphSchema,
   procedure_assembly: z.string(),
   procedure_callees: z.array(ghidraCanonicalAddressSchema),
   procedure_callers: z.array(ghidraCanonicalAddressSchema),
