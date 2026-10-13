@@ -20,6 +20,9 @@ import {
   nativeCallTargetsSchema,
 } from "../domain/native/nativeInstruction.js";
 import { nativeSubgraphSchema } from "../domain/native/nativeSubgraph.js";
+import { rustParityReportSchema } from "../domain/rustParity/rustParity.js";
+import { aiModelArtifactReportSchema } from "../domain/aiModel/aiModelArtifact.js";
+import { engineArchiveReportSchema } from "../domain/engineArchive/engineArchive.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
@@ -403,6 +406,9 @@ export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_keyed_archive: evidenceResultOf(keyedArchiveResultSchema),
   inspect_asset_catalog: evidenceResultOf(appleAssetCatalogResultSchema),
   trace_dylib_resolution: evidenceResultOf(dylibResolutionResultSchema),
+  verify_rust_parity: evidenceResultOf(rustParityReportSchema),
+  inspect_ai_model_artifact: evidenceResultOf(aiModelArtifactReportSchema),
+  inspect_engine_archive: evidenceResultOf(engineArchiveReportSchema),
 };
 
 /** Exact Evidence schema for execution-free managed static analysis. */

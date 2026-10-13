@@ -49,6 +49,9 @@ export const CLI_COMMANDS = Object.freeze({
   inspectGoBinary: "inspect-go-binary",
   inspectRustCppBinary: "inspect-rust-cpp-binary",
   inspectPythonFrozenBinary: "inspect-python-frozen-binary",
+  verifyRustParity: "verify-rust-parity",
+  inspectAiModelArtifact: "inspect-ai-model-artifact",
+  inspectEngineArchive: "inspect-engine-archive",
   inspectPeResources: "inspect-pe-resources",
   inspectAnalysisView: "inspect-analysis-view",
   listFridaDevices: "list-frida-devices",
@@ -151,6 +154,8 @@ export const CLI_COMMAND_ALIASES = Object.freeze([
   "compare-bundles",
   "inspect-rust-cpp",
   "inspect-python-frozen",
+  "verify-parity",
+  "inspect-ai-model",
 ]);
 
 /** Canonical MCP operations reached by CLI commands with different names. */
@@ -166,6 +171,8 @@ export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   "compare-bundles": ["compare_bundles"],
   "inspect-rust-cpp": ["inspect_rust_cpp_binary"],
   "inspect-python-frozen": ["inspect_python_frozen_binary"],
+  "verify-parity": ["verify_rust_parity"],
+  "inspect-ai-model": ["inspect_ai_model_artifact"],
   "list-frida-devices": ["list_frida_devices"],
   "list-frida-processes": ["list_frida_processes"],
   "instrument-with-frida": ["instrument_with_frida"],

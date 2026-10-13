@@ -42,6 +42,15 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   find_xrefs_to_name: { name: "malloc" },
   analyze_function: { procedure: "main" },
   decompile_subgraph: { procedure: "main" },
+  verify_rust_parity: {
+    c_source_code: "int add(int a, int b) { return a + b; }",
+    symbol_name: "add",
+    rust_source_code: "pub fn add(a: i32, b: i32) -> i32 { a.wrapping_add(b) }",
+    arg_types: ["i32", "i32"],
+    return_type: "i32",
+  },
+  inspect_ai_model_artifact: { path: "/tmp/model.gguf" },
+  inspect_engine_archive: { path: "/tmp/global-metadata.dat" },
   annotate_native_function: {
     procedure: "0x10100",
     name: "entry",

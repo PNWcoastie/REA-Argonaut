@@ -5,6 +5,9 @@ import { EVM_TOOL_CONTRACTS } from "./evm/evmToolContracts.js";
 import { GO_TOOL_CONTRACTS } from "./go/goToolContracts.js";
 import { RUST_CPP_TOOL_CONTRACTS } from "./rustCpp/rustCppToolContracts.js";
 import { PYTHON_FROZEN_TOOL_CONTRACTS } from "./pythonFrozen/pythonFrozenToolContracts.js";
+import { RUST_PARITY_TOOL_CONTRACTS } from "./rustParity/rustParityToolContracts.js";
+import { AI_MODEL_TOOL_CONTRACTS } from "./aiModel/aiModelToolContracts.js";
+import { ENGINE_ARCHIVE_TOOL_CONTRACTS } from "./engineArchive/engineArchiveToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
@@ -43,6 +46,9 @@ export const TOOL_CONTRACTS = [
   ...GO_TOOL_CONTRACTS,
   ...RUST_CPP_TOOL_CONTRACTS,
   ...PYTHON_FROZEN_TOOL_CONTRACTS,
+  ...RUST_PARITY_TOOL_CONTRACTS,
+  ...AI_MODEL_TOOL_CONTRACTS,
+  ...ENGINE_ARCHIVE_TOOL_CONTRACTS,
   ...WASM_TOOL_CONTRACTS,
   ...SQLITE_TOOL_CONTRACTS,
   ...CAPTURE_TOOL_CONTRACTS,

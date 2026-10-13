@@ -345,7 +345,10 @@ const workflowAvailabilityFor = ({
   if (
     name === "inspect_go_binary" ||
     name === "inspect_rust_cpp_binary" ||
-    name === "inspect_python_frozen_binary"
+    name === "inspect_python_frozen_binary" ||
+    name === "verify_rust_parity" ||
+    name === "inspect_ai_model_artifact" ||
+    name === "inspect_engine_archive"
   )
     return { reason: "available", remediation: null };
   if (name === "inspect_sqlite_database") {

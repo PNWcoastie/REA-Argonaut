@@ -1,0 +1,1189 @@
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type {
+  ExecutionOptions,
+  ProviderIdentity,
+} from "../../application/AnalysisProvider.js";
+import { ADAPTIVE_RESOURCE_PROFILE } from "../../config/AdaptiveResourceProfile.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import {
+  RUST_PARITY_PROVIDER_IDENTITY,
+  rustParityReportSchema,
+  type RustParityCounterexample,
+  type RustParityReport,
+  type RustParityScalarType,
+  type VerifyRustParityInput,
+} from "../../domain/rustParity/rustParity.js";
+import {
+  ParitySandboxRunner,
+  type SandboxRunResult,
+} from "../../process/ParitySandboxRunner.js";
+
+const OPERATION = "verify_rust_parity";
+const IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const JSON_MARKER = "ARGON_PARITY_JSON:";
+
+export interface RustParityPort {
+  readonly identity: ProviderIdentity;
+  verify(
+    input: VerifyRustParityInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<RustParityReport, AnalysisError>>;
+}
+
+interface HarnessJsonPayload {
+  readonly status: "verified_bit_exact" | "diverged" | "sandbox_fault";
+  readonly iterations_completed: number;
+  readonly boundary_cases_tested: number;
+  readonly fault_reason?: string;
+  readonly counterexample: RustParityCounterexample | null;
+}
+
+function resolveExecutable(
+  name: string,
+  extraPaths: readonly string[],
+): string | null {
+  for (const candidate of extraPaths) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  const pathEnv = process.env.PATH ?? "";
+  const sep = os.platform() === "win32" ? ";" : ":";
+  const exts = os.platform() === "win32" ? [".exe", ".cmd", ""] : [""];
+  for (const dir of pathEnv.split(sep)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const full = path.join(dir, `${name}${ext}`);
+      if (existsSync(full)) {
+        return full;
+      }
+    }
+  }
+  return null;
+}
+
+function resolveRustcPath(): string | null {
+  const home = os.homedir();
+  return resolveExecutable("rustc", [
+    path.join(home, ".cargo", "bin", os.platform() === "win32" ? "rustc.exe" : "rustc"),
+    "/usr/bin/rustc",
+    "/usr/local/bin/rustc",
+  ]);
+}
+
+function resolveCargoPath(): string | null {
+  const home = os.homedir();
+  return resolveExecutable("cargo", [
+    path.join(home, ".cargo", "bin", os.platform() === "win32" ? "cargo.exe" : "cargo"),
+    "/usr/bin/cargo",
+    "/usr/local/bin/cargo",
+  ]);
+}
+
+function resolveCCompilerPath(): string | null {
+  return (
+    resolveExecutable("gcc", ["/usr/bin/gcc", "/usr/local/bin/gcc"]) ??
+    resolveExecutable("cc", ["/usr/bin/cc"]) ??
+    resolveExecutable("clang", ["/usr/bin/clang", "/usr/local/bin/clang"])
+  );
+}
+
+/**
+ * Patches a binary buffer in-memory so that OS dynamic loaders (`dlopen` / `LoadLibrary`)
+ * can load PIE executables (`DF_1_PIE` on Linux ELF, `MH_EXECUTE` on macOS Mach-O,
+ * `IMAGE_FILE_DLL` on Windows PE) without modifying the user's original artifact on disk.
+ */
+function patchBinaryForDynamicLoading(rawBuf: Buffer): Buffer {
+  const buf = Buffer.from(rawBuf);
+
+  // 1. ELF container: strip DF_1_PIE (0x08000000) from DT_FLAGS_1 (0x6ffffffb) in PT_DYNAMIC / .dynamic
+  if (
+    buf.length >= 64 &&
+    buf[0] === 0x7f &&
+    buf[1] === 0x45 &&
+    buf[2] === 0x4c &&
+    buf[3] === 0x46
+  ) {
+    const is64 = buf[4] === 2;
+    const isLE = buf[5] === 1;
+    if (is64 && isLE) {
+      const eType = buf.readUInt16LE(16);
+      if (eType === 2) {
+        // Patch ET_EXEC -> ET_DYN if needed
+        buf.writeUInt16LE(3, 16);
+      }
+      const ePhoff = Number(buf.readBigUInt64LE(32));
+      const ePhentsize = buf.readUInt16LE(54);
+      const ePhnum = buf.readUInt16LE(56);
+      if (ePhoff > 0 && ePhentsize >= 56 && ePhnum > 0) {
+        for (let i = 0; i < ePhnum; i++) {
+          const phBase = ePhoff + i * ePhentsize;
+          if (phBase + 56 > buf.length) break;
+          const pType = buf.readUInt32LE(phBase);
+          // PT_DYNAMIC == 2
+          if (pType === 2) {
+            const pOffset = Number(buf.readBigUInt64LE(phBase + 8));
+            const pFilesz = Number(buf.readBigUInt64LE(phBase + 32));
+            const end = Math.min(buf.length, pOffset + pFilesz);
+            for (let off = pOffset; off + 16 <= end; off += 16) {
+              const dTag = buf.readBigInt64LE(off);
+              if (dTag === 0n) break;
+              // DT_FLAGS_1 == 0x6ffffffb
+              if (dTag === 0x6ffffffbn) {
+                const dVal = buf.readBigUInt64LE(off + 8);
+                // Clear DF_1_PIE (0x08000000)
+                const cleared = dVal & ~0x08000000n;
+                buf.writeBigUInt64LE(cleared, off + 8);
+              }
+            }
+          }
+        }
+      }
+    } else if (!is64 && isLE) {
+      const ePhoff = buf.readUInt32LE(28);
+      const ePhentsize = buf.readUInt16LE(42);
+      const ePhnum = buf.readUInt16LE(44);
+      if (ePhoff > 0 && ePhentsize >= 32 && ePhnum > 0) {
+        for (let i = 0; i < ePhnum; i++) {
+          const phBase = ePhoff + i * ePhentsize;
+          if (phBase + 32 > buf.length) break;
+          const pType = buf.readUInt32LE(phBase);
+          if (pType === 2) {
+            const pOffset = buf.readUInt32LE(phBase + 4);
+            const pFilesz = buf.readUInt32LE(phBase + 16);
+            const end = Math.min(buf.length, pOffset + pFilesz);
+            for (let off = pOffset; off + 8 <= end; off += 8) {
+              const dTag = buf.readUInt32LE(off);
+              if (dTag === 0) break;
+              if (dTag === 0x6ffffffb) {
+                const dVal = buf.readUInt32LE(off + 4);
+                buf.writeUInt32LE(dVal & ~0x08000000, off + 4);
+              }
+            }
+          }
+        }
+      }
+    }
+    return buf;
+  }
+
+  // 2. Mach-O 64-bit / 32-bit LE: patch MH_EXECUTE (2) -> MH_DYLIB (6)
+  if (buf.length >= 32) {
+    const magic = buf.readUInt32LE(0);
+    if (magic === 0xfeedfacf || magic === 0xfeedface) {
+      const fileType = buf.readUInt32LE(12);
+      if (fileType === 2) {
+        buf.writeUInt32LE(6, 12);
+      }
+      return buf;
+    }
+  }
+
+  // 3. PE container: set IMAGE_FILE_DLL (0x2000) in COFF Characteristics
+  if (buf.length >= 64 && buf[0] === 0x4d && buf[1] === 0x5a) {
+    const peOffset = buf.readUInt32LE(0x3c);
+    if (
+      peOffset + 24 <= buf.length &&
+      buf[peOffset] === 0x50 &&
+      buf[peOffset + 1] === 0x45 &&
+      buf[peOffset + 2] === 0x00 &&
+      buf[peOffset + 3] === 0x00
+    ) {
+      const charOff = peOffset + 22;
+      const chars = buf.readUInt16LE(charOff);
+      buf.writeUInt16LE(chars | 0x2000, charOff);
+    }
+  }
+
+  return buf;
+}
+
+function generateBoundaryExpr(ty: RustParityScalarType): string {
+  switch (ty) {
+    case "bool":
+      return "vec![false, true]";
+    case "i8":
+      return "vec![0i8, 1, -1, 2, -2, 63, 64, -64, i8::MAX - 1, i8::MAX, i8::MIN + 1, i8::MIN]";
+    case "u8":
+      return "vec![0u8, 1, 2, 63, 64, 0x7f, 0x80, 0xfe, 0xff]";
+    case "i16":
+      return "vec![0i16, 1, -1, 2, -2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, -4096, i16::MAX - 1, i16::MAX, i16::MIN + 1, i16::MIN]";
+    case "u16":
+      return "vec![0u16, 1, 2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, 32767, 32768, 65534, 65535]";
+    case "i32":
+      return "vec![0i32, 1, -1, 2, -2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, 65535, 65536, -4096, -65536, 0xdeadbeefu32 as i32, i32::MAX - 1, i32::MAX, i32::MIN + 1, i32::MIN]";
+    case "u32":
+      return "vec![0u32, 1, 2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, 65535, 65536, 0x7fffffff, 0x80000000, 0xdeadbeef, u32::MAX - 1, u32::MAX]";
+    case "i64":
+      return "vec![0i64, 1, -1, 2, -2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, 65535, 65536, -4096, 0x7fffffff, 0x80000000, 0xdeadbeef, i64::MAX - 1, i64::MAX, i64::MIN + 1, i64::MIN]";
+    case "u64":
+      return "vec![0u64, 1, 2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, 65535, 65536, 0x7fffffff, 0x80000000, 0xffffffff, 0xdeadbeef, 0x7fffffffffffffff, 0x8000000000000000, u64::MAX - 1, u64::MAX]";
+    case "f32":
+      return "vec![0.0f32, -0.0f32, 1.0, -1.0, 2.0, -2.0, 0.5, 4095.0, 4096.0, 4097.0, f32::MIN_POSITIVE, -f32::MIN_POSITIVE, f32::EPSILON, f32::MAX, f32::MIN, f32::INFINITY, f32::NEG_INFINITY, f32::NAN]";
+    case "f64":
+      return "vec![0.0f64, -0.0f64, 1.0, -1.0, 2.0, -2.0, 0.5, 4095.0, 4096.0, 4097.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE, f64::EPSILON, f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY, f64::NAN]";
+  }
+}
+
+function generateRustHarnessSource(
+  input: VerifyRustParityInput,
+  libPathLiteral: string,
+  rustFnName: string,
+): string {
+  const argTypes = input.arg_types;
+  const retType = input.return_type;
+  const tupleType = `(${argTypes.map((t) => `${t},`).join(" ")})`;
+  const fnParamSig = argTypes.map((t, i) => `a${i}: ${t}`).join(", ");
+  const fnCallArgs = argTypes.map((_, i) => `args.${i}`).join(", ");
+
+  const boundaryVecDecls = argTypes
+    .map((t, i) => `let b${i}: Vec<${t}> = ${generateBoundaryExpr(t)};`)
+    .join("\n    ");
+
+  const defaultTupleInit = `(${argTypes.map((_, i) => `b${i}[0],`).join(" ")})`;
+
+  const singleAxisBoundaryLoops = argTypes
+    .map((_, i) => {
+      const tupleAssign = `(${argTypes
+        .map((__, j) => (i === j ? "val," : `b${j}[0],`))
+        .join(" ")})`;
+      return `
+    for &val in &b${i} {
+        if boundary_cases.len() < 64 {
+            boundary_cases.push(${tupleAssign});
+        }
+    }`;
+    })
+    .join("\n");
+
+  const diagonalBoundaryLoop = `
+    for idx in 0..20usize {
+        if boundary_cases.len() >= 64 {
+            break;
+        }
+        boundary_cases.push((${argTypes.map((_, i) => `b${i}[idx % b${i}.len()],`).join(" ")}));
+    }`;
+
+  const randomTupleExpr = `(${argTypes.map((t) => `gen_${t}(&mut rng),`).join(" ")})`;
+
+  const formatTupleVecExpr = `vec![${argTypes.map((t, i) => `fmt_${t}(args.${i})`).join(", ")}]`;
+
+  const shrinkBlocks = argTypes
+    .map((t, i) => {
+      return `
+            {
+                let orig_val = cur.${i};
+                for cand in shrink_candidates_${t}(orig_val) {
+                    if !same_arg_${t}(cand, cur.${i}) {
+                        let mut probe = cur;
+                        probe.${i} = cand;
+                        if is_diverged(c_fn, &probe) {
+                            cur.${i} = cand;
+                            shrink_steps += 1;
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+                let mut low = zero_${t}();
+                let mut high = cur.${i};
+                for _ in 0..64 {
+                    let mid = bisect_${t}(low, high);
+                    if same_arg_${t}(mid, high) || same_arg_${t}(mid, low) {
+                        break;
+                    }
+                    let mut probe = cur;
+                    probe.${i} = mid;
+                    if is_diverged(c_fn, &probe) {
+                        high = mid;
+                        cur.${i} = mid;
+                        shrink_steps += 1;
+                        changed = true;
+                    } else {
+                        low = mid;
+                    }
+                }
+                for step_cand in step_toward_zero_${t}(cur.${i}) {
+                    if !same_arg_${t}(step_cand, cur.${i}) {
+                        let mut probe = cur;
+                        probe.${i} = step_cand;
+                        if is_diverged(c_fn, &probe) {
+                            cur.${i} = step_cand;
+                            shrink_steps += 1;
+                            changed = true;
+                        }
+                    }
+                }
+            }`;
+    })
+    .join("\n");
+
+  return `#![allow(dead_code, unused_variables, non_snake_case, unused_mut, unused_parens, overflowing_literals, improper_ctypes_definitions)]
+
+mod candidate {
+${input.rust_source_code}
+}
+
+#[cfg(unix)]
+#[link(name = "dl")]
+extern "C" {
+    fn dlopen(filename: *const std::os::raw::c_char, flags: i32) -> *mut std::ffi::c_void;
+    fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::os::raw::c_char) -> *mut std::ffi::c_void;
+    fn dlerror() -> *const std::os::raw::c_char;
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn LoadLibraryA(lpLibFileName: *const u8) -> *mut std::ffi::c_void;
+    fn GetProcAddress(hModule: *mut std::ffi::c_void, lpProcName: *const u8) -> *mut std::ffi::c_void;
+}
+
+struct SplitMix64 {
+    state: u64,
+}
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e3779b97f4a7c15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+        z ^ (z >> 31)
+    }
+}
+
+fn gen_bool(rng: &mut SplitMix64) -> bool {
+    (rng.next_u64() & 1) == 1
+}
+fn gen_i8(rng: &mut SplitMix64) -> i8 {
+    rng.next_u64() as i8
+}
+fn gen_u8(rng: &mut SplitMix64) -> u8 {
+    rng.next_u64() as u8
+}
+fn gen_i16(rng: &mut SplitMix64) -> i16 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 513) as i16).wrapping_sub(256),
+        1 => ((rng.next_u64() % 16385) as i16).wrapping_sub(8192),
+        _ => rng.next_u64() as i16,
+    }
+}
+fn gen_u16(rng: &mut SplitMix64) -> u16 {
+    match rng.next_u64() & 3 {
+        0 => (rng.next_u64() % 512) as u16,
+        1 => (rng.next_u64() % 16384) as u16,
+        _ => rng.next_u64() as u16,
+    }
+}
+fn gen_i32(rng: &mut SplitMix64) -> i32 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 513) as i32).wrapping_sub(256),
+        1 => ((rng.next_u64() % 131073) as i32).wrapping_sub(65536),
+        2 => {
+            let shift = (rng.next_u64() % 31) as u32;
+            let offset = ((rng.next_u64() % 9) as i32) - 4;
+            (1i32.wrapping_shl(shift)).wrapping_add(offset)
+        }
+        _ => rng.next_u64() as i32,
+    }
+}
+fn gen_u32(rng: &mut SplitMix64) -> u32 {
+    match rng.next_u64() & 3 {
+        0 => (rng.next_u64() % 512) as u32,
+        1 => (rng.next_u64() % 131072) as u32,
+        2 => {
+            let shift = (rng.next_u64() % 32) as u32;
+            let offset = (rng.next_u64() % 9) as u32;
+            (1u32.wrapping_shl(shift)).wrapping_add(offset).wrapping_sub(4)
+        }
+        _ => rng.next_u64() as u32,
+    }
+}
+fn gen_i64(rng: &mut SplitMix64) -> i64 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 513) as i64).wrapping_sub(256),
+        1 => ((rng.next_u64() % 131073) as i64).wrapping_sub(65536),
+        2 => {
+            let shift = (rng.next_u64() % 63) as u32;
+            let offset = ((rng.next_u64() % 9) as i64) - 4;
+            (1i64.wrapping_shl(shift)).wrapping_add(offset)
+        }
+        _ => rng.next_u64() as i64,
+    }
+}
+fn gen_u64(rng: &mut SplitMix64) -> u64 {
+    match rng.next_u64() & 3 {
+        0 => rng.next_u64() % 512,
+        1 => rng.next_u64() % 131072,
+        2 => {
+            let shift = (rng.next_u64() % 64) as u32;
+            let offset = rng.next_u64() % 9;
+            (1u64.wrapping_shl(shift)).wrapping_add(offset).wrapping_sub(4)
+        }
+        _ => rng.next_u64(),
+    }
+}
+fn gen_f32(rng: &mut SplitMix64) -> f32 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 200001) as f32 - 100000.0) * 0.1,
+        1 => ((rng.next_u64() % 20001) as f32 - 10000.0) * 0.0001,
+        2 => (rng.next_u64() % 65536) as f32 - 32768.0,
+        _ => f32::from_bits(rng.next_u64() as u32),
+    }
+}
+fn gen_f64(rng: &mut SplitMix64) -> f64 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 200001) as f64 - 100000.0) * 0.1,
+        1 => ((rng.next_u64() % 20001) as f64 - 10000.0) * 0.0001,
+        2 => (rng.next_u64() % 65536) as f64 - 32768.0,
+        _ => f64::from_bits(rng.next_u64()),
+    }
+}
+
+fn zero_bool() -> bool { false }
+fn zero_i8() -> i8 { 0 }
+fn zero_u8() -> u8 { 0 }
+fn zero_i16() -> i16 { 0 }
+fn zero_u16() -> u16 { 0 }
+fn zero_i32() -> i32 { 0 }
+fn zero_u32() -> u32 { 0 }
+fn zero_i64() -> i64 { 0 }
+fn zero_u64() -> u64 { 0 }
+fn zero_f32() -> f32 { 0.0 }
+fn zero_f64() -> f64 { 0.0 }
+
+fn same_arg_bool(a: bool, b: bool) -> bool { a == b }
+fn same_arg_i8(a: i8, b: i8) -> bool { a == b }
+fn same_arg_u8(a: u8, b: u8) -> bool { a == b }
+fn same_arg_i16(a: i16, b: i16) -> bool { a == b }
+fn same_arg_u16(a: u16, b: u16) -> bool { a == b }
+fn same_arg_i32(a: i32, b: i32) -> bool { a == b }
+fn same_arg_u32(a: u32, b: u32) -> bool { a == b }
+fn same_arg_i64(a: i64, b: i64) -> bool { a == b }
+fn same_arg_u64(a: u64, b: u64) -> bool { a == b }
+fn same_arg_f32(a: f32, b: f32) -> bool { a.to_bits() == b.to_bits() }
+fn same_arg_f64(a: f64, b: f64) -> bool { a.to_bits() == b.to_bits() }
+
+fn shrink_candidates_bool(v: bool) -> Vec<bool> {
+    if v { vec![false] } else { vec![] }
+}
+fn shrink_candidates_i8(v: i8) -> Vec<i8> {
+    let mut out = vec![0];
+    if v > 1 || v < -1 { out.push(1); }
+    if v < -1 { out.push(-1); }
+    out
+}
+fn shrink_candidates_u8(v: u8) -> Vec<u8> {
+    if v > 1 { vec![0, 1] } else if v == 1 { vec![0] } else { vec![] }
+}
+fn shrink_candidates_i16(v: i16) -> Vec<i16> {
+    let mut out = vec![0];
+    if v > 1 || v < -1 { out.push(1); }
+    if v < -1 { out.push(-1); }
+    out
+}
+fn shrink_candidates_u16(v: u16) -> Vec<u16> {
+    if v > 1 { vec![0, 1] } else if v == 1 { vec![0] } else { vec![] }
+}
+fn shrink_candidates_i32(v: i32) -> Vec<i32> {
+    let mut out = vec![0];
+    if v > 1 || v < -1 { out.push(1); }
+    if v < -1 { out.push(-1); }
+    out
+}
+fn shrink_candidates_u32(v: u32) -> Vec<u32> {
+    if v > 1 { vec![0, 1] } else if v == 1 { vec![0] } else { vec![] }
+}
+fn shrink_candidates_i64(v: i64) -> Vec<i64> {
+    let mut out = vec![0];
+    if v > 1 || v < -1 { out.push(1); }
+    if v < -1 { out.push(-1); }
+    out
+}
+fn shrink_candidates_u64(v: u64) -> Vec<u64> {
+    if v > 1 { vec![0, 1] } else if v == 1 { vec![0] } else { vec![] }
+}
+fn shrink_candidates_f32(v: f32) -> Vec<f32> {
+    vec![0.0, 1.0, -1.0]
+}
+fn shrink_candidates_f64(v: f64) -> Vec<f64> {
+    vec![0.0, 1.0, -1.0]
+}
+
+fn bisect_bool(_low: bool, high: bool) -> bool { high }
+fn bisect_i8(low: i8, high: i8) -> i8 { ((low as i16 + high as i16) / 2) as i8 }
+fn bisect_u8(low: u8, high: u8) -> u8 { ((low as u16 + high as u16) / 2) as u8 }
+fn bisect_i16(low: i16, high: i16) -> i16 { ((low as i32 + high as i32) / 2) as i16 }
+fn bisect_u16(low: u16, high: u16) -> u16 { ((low as u32 + high as u32) / 2) as u16 }
+fn bisect_i32(low: i32, high: i32) -> i32 { ((low as i64 + high as i64) / 2) as i32 }
+fn bisect_u32(low: u32, high: u32) -> u32 { ((low as u64 + high as u64) / 2) as u32 }
+fn bisect_i64(low: i64, high: i64) -> i64 { ((low as i128 + high as i128) / 2) as i64 }
+fn bisect_u64(low: u64, high: u64) -> u64 { ((low as u128 + high as u128) / 2) as u64 }
+fn bisect_f32(low: f32, high: f32) -> f32 {
+    if !high.is_finite() || !low.is_finite() { return high; }
+    let mid = low + (high - low) * 0.5;
+    if mid.abs() > 1.0 { mid.trunc() } else { mid }
+}
+fn bisect_f64(low: f64, high: f64) -> f64 {
+    if !high.is_finite() || !low.is_finite() { return high; }
+    let mid = low + (high - low) * 0.5;
+    if mid.abs() > 1.0 { mid.trunc() } else { mid }
+}
+
+fn step_toward_zero_bool(_v: bool) -> Vec<bool> { vec![] }
+fn step_toward_zero_i8(v: i8) -> Vec<i8> { if v > 0 { vec![v - 1] } else if v < 0 { vec![v + 1] } else { vec![] } }
+fn step_toward_zero_u8(v: u8) -> Vec<u8> { if v > 0 { vec![v - 1] } else { vec![] } }
+fn step_toward_zero_i16(v: i16) -> Vec<i16> { if v > 0 { vec![v - 1] } else if v < 0 { vec![v + 1] } else { vec![] } }
+fn step_toward_zero_u16(v: u16) -> Vec<u16> { if v > 0 { vec![v - 1] } else { vec![] } }
+fn step_toward_zero_i32(v: i32) -> Vec<i32> { if v > 0 { vec![v - 1] } else if v < 0 { vec![v + 1] } else { vec![] } }
+fn step_toward_zero_u32(v: u32) -> Vec<u32> { if v > 0 { vec![v - 1] } else { vec![] } }
+fn step_toward_zero_i64(v: i64) -> Vec<i64> { if v > 0 { vec![v - 1] } else if v < 0 { vec![v + 1] } else { vec![] } }
+fn step_toward_zero_u64(v: u64) -> Vec<u64> { if v > 0 { vec![v - 1] } else { vec![] } }
+fn step_toward_zero_f32(v: f32) -> Vec<f32> { if v > 1.0 { vec![v - 1.0] } else if v < -1.0 { vec![v + 1.0] } else { vec![] } }
+fn step_toward_zero_f64(v: f64) -> Vec<f64> { if v > 1.0 { vec![v - 1.0] } else if v < -1.0 { vec![v + 1.0] } else { vec![] } }
+
+fn fmt_bool(v: bool) -> String { format!("{}", v) }
+fn fmt_i8(v: i8) -> String { format!("{}", v) }
+fn fmt_u8(v: u8) -> String { format!("{}", v) }
+fn fmt_i16(v: i16) -> String { format!("{}", v) }
+fn fmt_u16(v: u16) -> String { format!("{}", v) }
+fn fmt_i32(v: i32) -> String { format!("{}", v) }
+fn fmt_u32(v: u32) -> String { format!("{}", v) }
+fn fmt_i64(v: i64) -> String { format!("{}", v) }
+fn fmt_u64(v: u64) -> String { format!("{}", v) }
+fn fmt_f32(v: f32) -> String {
+    if v.is_nan() { "NaN".to_string() }
+    else if v.to_bits() == 0x8000_0000 { "-0.0".to_string() }
+    else { format!("{:?}", v) }
+}
+fn fmt_f64(v: f64) -> String {
+    if v.is_nan() { "NaN".to_string() }
+    else if v.to_bits() == 0x8000_0000_0000_0000 { "-0.0".to_string() }
+    else { format!("{:?}", v) }
+}
+
+fn hex_bool(v: bool) -> String { format!("0x{:02x}", if v { 1u8 } else { 0u8 }) }
+fn hex_i8(v: i8) -> String { format!("0x{:02x}", v as u8) }
+fn hex_u8(v: u8) -> String { format!("0x{:02x}", v) }
+fn hex_i16(v: i16) -> String { format!("0x{:04x}", v as u16) }
+fn hex_u16(v: u16) -> String { format!("0x{:04x}", v) }
+fn hex_i32(v: i32) -> String { format!("0x{:08x}", v as u32) }
+fn hex_u32(v: u32) -> String { format!("0x{:08x}", v) }
+fn hex_i64(v: i64) -> String { format!("0x{:016x}", v as u64) }
+fn hex_u64(v: u64) -> String { format!("0x{:016x}", v) }
+fn hex_f32(v: f32) -> String { format!("0x{:08x}", v.to_bits()) }
+fn hex_f64(v: f64) -> String { format!("0x{:016x}", v.to_bits()) }
+
+fn bits_bool(v: bool) -> u64 { if v { 1 } else { 0 } }
+fn bits_i8(v: i8) -> u64 { (v as u8) as u64 }
+fn bits_u8(v: u8) -> u64 { v as u64 }
+fn bits_i16(v: i16) -> u64 { (v as u16) as u64 }
+fn bits_u16(v: u16) -> u64 { v as u64 }
+fn bits_i32(v: i32) -> u64 { (v as u32) as u64 }
+fn bits_u32(v: u32) -> u64 { v as u64 }
+fn bits_i64(v: i64) -> u64 { v as u64 }
+fn bits_u64(v: u64) -> u64 { v }
+fn bits_f32(v: f32) -> u64 { v.to_bits() as u64 }
+fn bits_f64(v: f64) -> u64 { v.to_bits() }
+
+fn ulp_f32(a: f32, b: f32) -> Option<u64> {
+    if a.is_nan() && b.is_nan() { return Some(0); }
+    if a.is_nan() || b.is_nan() { return None; }
+    let ab = a.to_bits();
+    let bb = b.to_bits();
+    if ab == bb { return Some(0); }
+    if a.is_infinite() || b.is_infinite() { return None; }
+    let ao = if (ab & 0x8000_0000) != 0 { 0x8000_0000u32.wrapping_sub(ab & 0x7fff_ffff) } else { 0x8000_0000u32.wrapping_add(ab) };
+    let bo = if (bb & 0x8000_0000) != 0 { 0x8000_0000u32.wrapping_sub(bb & 0x7fff_ffff) } else { 0x8000_0000u32.wrapping_add(bb) };
+    let dist = if ao >= bo { ao - bo } else { bo - ao };
+    Some(if dist == 0 { 1 } else { dist as u64 })
+}
+
+fn ulp_f64(a: f64, b: f64) -> Option<u64> {
+    if a.is_nan() && b.is_nan() { return Some(0); }
+    if a.is_nan() || b.is_nan() { return None; }
+    let ab = a.to_bits();
+    let bb = b.to_bits();
+    if ab == bb { return Some(0); }
+    if a.is_infinite() || b.is_infinite() { return None; }
+    let ao = if (ab & 0x8000_0000_0000_0000) != 0 { 0x8000_0000_0000_0000u64.wrapping_sub(ab & 0x7fff_ffff_ffff_ffff) } else { 0x8000_0000_0000_0000u64.wrapping_add(ab) };
+    let bo = if (bb & 0x8000_0000_0000_0000) != 0 { 0x8000_0000_0000_0000u64.wrapping_sub(bb & 0x7fff_ffff_ffff_ffff) } else { 0x8000_0000_0000_0000u64.wrapping_add(bb) };
+    let dist = if ao >= bo { ao - bo } else { bo - ao };
+    let capped = if dist == 0 { 1 } else if dist > 9_007_199_254_740_991 { 9_007_199_254_740_991 } else { dist };
+    Some(capped)
+}
+
+fn compare_ret_${retType}(c_val: ${retType}, r_val: ${retType}, ulp_tol: u64) -> (bool, Option<u64>) {
+    ${
+      retType === "f32"
+        ? `match ulp_f32(c_val, r_val) { Some(d) => (d <= ulp_tol, Some(d)), None => (false, None) }`
+        : retType === "f64"
+          ? `match ulp_f64(c_val, r_val) { Some(d) => (d <= ulp_tol, Some(d)), None => (false, None) }`
+          : `(c_val == r_val, None)`
+    }
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\\\\""),
+            '\\\\' => out.push_str("\\\\\\\\"),
+            '\\n' => out.push_str("\\\\n"),
+            '\\r' => out.push_str("\\\\r"),
+            '\\t' => out.push_str("\\\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+type TargetFn = unsafe extern "C" fn(${fnParamSig}) -> ${retType};
+type ArgTuple = ${tupleType};
+
+fn eval_pair(c_fn: TargetFn, args: &ArgTuple) -> (${retType}, ${retType}) {
+    let c_out = unsafe { c_fn(${fnCallArgs}) };
+    let r_out = candidate::${rustFnName}(${fnCallArgs});
+    (c_out, r_out)
+}
+
+fn is_diverged(c_fn: TargetFn, args: &ArgTuple) -> bool {
+    let (c_out, r_out) = eval_pair(c_fn, args);
+    let (eq, _) = compare_ret_${retType}(c_out, r_out, ${String(input.float_ulp_tolerance)}u64);
+    !eq
+}
+
+fn format_args_json(args: &ArgTuple) -> String {
+    let items: Vec<String> = ${formatTupleVecExpr};
+    let quoted: Vec<String> = items.into_iter().map(|s| format!("\\"{}\\"", json_escape(&s))).collect();
+    format!("[{}]", quoted.join(","))
+}
+
+fn main() {
+    let lib_path = std::ffi::CString::new(${JSON.stringify(libPathLiteral)}).unwrap();
+    let sym_name = std::ffi::CString::new(${JSON.stringify(input.symbol_name)}).unwrap();
+
+    #[cfg(unix)]
+    let fn_ptr = unsafe {
+        let handle = dlopen(lib_path.as_ptr(), 2);
+        if handle.is_null() {
+            let err_ptr = dlerror();
+            let msg = if err_ptr.is_null() {
+                "dlopen returned null".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(err_ptr).to_string_lossy().into_owned()
+            };
+            println!("${JSON_MARKER}{{\\"status\\":\\"sandbox_fault\\",\\"iterations_completed\\":0,\\"boundary_cases_tested\\":0,\\"fault_reason\\":\\"{}\\",\\"counterexample\\":null}}", json_escape(&msg));
+            std::process::exit(42);
+        }
+        let sym = dlsym(handle, sym_name.as_ptr());
+        if sym.is_null() {
+            println!("${JSON_MARKER}{{\\"status\\":\\"sandbox_fault\\",\\"iterations_completed\\":0,\\"boundary_cases_tested\\":0,\\"fault_reason\\":\\"dlsym could not resolve symbol\\",\\"counterexample\\":null}}");
+            std::process::exit(42);
+        }
+        sym
+    };
+
+    #[cfg(windows)]
+    let fn_ptr = unsafe {
+        let handle = LoadLibraryA(lib_path.as_ptr() as *const u8);
+        if handle.is_null() {
+            println!("${JSON_MARKER}{{\\"status\\":\\"sandbox_fault\\",\\"iterations_completed\\":0,\\"boundary_cases_tested\\":0,\\"fault_reason\\":\\"LoadLibraryA returned null\\",\\"counterexample\\":null}}");
+            std::process::exit(42);
+        }
+        let sym = GetProcAddress(handle, sym_name.as_ptr() as *const u8);
+        if sym.is_null() {
+            println!("${JSON_MARKER}{{\\"status\\":\\"sandbox_fault\\",\\"iterations_completed\\":0,\\"boundary_cases_tested\\":0,\\"fault_reason\\":\\"GetProcAddress could not resolve symbol\\",\\"counterexample\\":null}}");
+            std::process::exit(42);
+        }
+        sym
+    };
+
+    let c_fn: TargetFn = unsafe { std::mem::transmute(fn_ptr) };
+
+    ${boundaryVecDecls}
+    let mut boundary_cases: Vec<ArgTuple> = Vec::with_capacity(64);
+    boundary_cases.push(${defaultTupleInit});
+    ${singleAxisBoundaryLoops}
+    ${diagonalBoundaryLoop}
+
+    let boundary_count = boundary_cases.len();
+    let mut rng = SplitMix64::new(${String(input.seed)}u64);
+    let random_requested = ${String(input.iterations)}usize;
+    let total_cases = boundary_count + random_requested;
+
+    for idx in 0..total_cases {
+        let args: ArgTuple = if idx < boundary_count {
+            boundary_cases[idx]
+        } else {
+            ${randomTupleExpr}
+        };
+
+        let (c_out, r_out) = eval_pair(c_fn, &args);
+        let (eq, _) = compare_ret_${retType}(c_out, r_out, ${String(input.float_ulp_tolerance)}u64);
+        if !eq {
+            let orig_args = args;
+            let mut cur = orig_args;
+            let mut shrink_steps = 0usize;
+            for _pass in 0..4 {
+                let mut changed = false;
+                ${shrinkBlocks}
+                if !changed {
+                    break;
+                }
+            }
+
+            let (shrunk_c, shrunk_r) = eval_pair(c_fn, &cur);
+            let (_, shrunk_ulp) = compare_ret_${retType}(shrunk_c, shrunk_r, ${String(input.float_ulp_tolerance)}u64);
+            let c_str = fmt_${retType}(shrunk_c);
+            let r_str = fmt_${retType}(shrunk_r);
+            let c_hex = hex_${retType}(shrunk_c);
+            let r_hex = hex_${retType}(shrunk_r);
+            let c_bits = bits_${retType}(shrunk_c);
+            let r_bits = bits_${retType}(shrunk_r);
+            let xor_mask = c_bits ^ r_bits;
+            let diff_bits = xor_mask.count_ones();
+            let low_bit = if xor_mask == 0 { 0 } else { xor_mask.trailing_zeros() };
+            let high_bit = if xor_mask == 0 { 0 } else { 63 - xor_mask.leading_zeros() };
+            let summary = format!(
+                "XOR diff = 0x{:x} ({} bit(s) differ, lowest bit = {}, highest bit = {}); C returned {} ({}), Rust returned {} ({})",
+                xor_mask, diff_bits, low_bit, high_bit, c_hex, c_str, r_hex, r_str
+            );
+            let ulp_json = match shrunk_ulp {
+                Some(u) => format!("{}", u),
+                None => "null".to_string(),
+            };
+            let b_tested = if idx + 1 < boundary_count { idx + 1 } else { boundary_count };
+            println!(
+                "${JSON_MARKER}{{\\"status\\":\\"diverged\\",\\"iterations_completed\\":{},\\"boundary_cases_tested\\":{},\\"counterexample\\":{{\\"failing_iteration\\":{},\\"original_inputs\\":{},\\"shrunk_inputs\\":{},\\"shrink_steps\\":{},\\"c_output\\":\\"{}\\",\\"rust_output\\":\\"{}\\",\\"c_output_hex\\":\\"{}\\",\\"rust_output_hex\\":\\"{}\\",\\"bit_diff_summary\\":\\"{}\\",\\"ulp_distance\\":{}}}}}",
+                idx + 1,
+                b_tested,
+                idx,
+                format_args_json(&orig_args),
+                format_args_json(&cur),
+                shrink_steps,
+                json_escape(&c_str),
+                json_escape(&r_str),
+                json_escape(&c_hex),
+                json_escape(&r_hex),
+                json_escape(&summary),
+                ulp_json
+            );
+            return;
+        }
+    }
+
+    println!(
+        "${JSON_MARKER}{{\\"status\\":\\"verified_bit_exact\\",\\"iterations_completed\\":{},\\"boundary_cases_tested\\":{},\\"counterexample\\":null}}",
+        random_requested,
+        boundary_count
+    );
+}
+`;
+}
+
+export class RustParityVerifier implements RustParityPort {
+  readonly identity: ProviderIdentity = RUST_PARITY_PROVIDER_IDENTITY;
+  private readonly sandboxRunner = new ParitySandboxRunner();
+
+  async verify(
+    input: VerifyRustParityInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<RustParityReport, AnalysisError>> {
+    if (options?.signal?.aborted) {
+      return err(new AnalysisCancelledError(OPERATION));
+    }
+
+    if (!input.target_binary_path && !input.c_source_code) {
+      return err(
+        new AnalysisInputError(
+          OPERATION,
+          {
+            userMessage:
+              "verify_rust_parity requires either target_binary_path or c_source_code.",
+          },
+          [
+            {
+              path: ["target_binary_path"],
+              reason: "missing_argument",
+              message:
+                "verify_rust_parity requires either target_binary_path or c_source_code.",
+            },
+          ],
+        ),
+      );
+    }
+
+    const rustFnName = input.rust_fn_name ?? input.symbol_name;
+    if (!IDENTIFIER_REGEX.test(input.symbol_name)) {
+      return err(
+        new AnalysisInputError(
+          OPERATION,
+          {
+            userMessage: `Invalid C symbol identifier: ${input.symbol_name}`,
+          },
+          [
+            {
+              path: ["symbol_name"],
+              reason: "invalid_format",
+              message: "symbol_name must be a valid C identifier.",
+            },
+          ],
+        ),
+      );
+    }
+
+    if (!IDENTIFIER_REGEX.test(rustFnName)) {
+      return err(
+        new AnalysisInputError(
+          OPERATION,
+          {
+            userMessage: `Invalid Rust function identifier: ${rustFnName}`,
+          },
+          [
+            {
+              path: ["rust_fn_name"],
+              reason: "invalid_format",
+              message: "rust_fn_name must be a valid Rust identifier.",
+            },
+          ],
+        ),
+      );
+    }
+
+    const rustcBin = resolveRustcPath();
+    if (!rustcBin) {
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          this.identity.id,
+          OPERATION,
+          "rustc compiler not found on host system.",
+          {
+            userMessage:
+              "Rust compiler (rustc) is required for closed-loop parity verification.",
+          },
+        ),
+      );
+    }
+
+    const workDir = await mkdtemp(path.join(os.tmpdir(), "argonaut-parity-"));
+    try {
+      const osPlat = os.platform();
+      const libExt =
+        osPlat === "darwin" ? "dylib" : osPlat === "win32" ? "dll" : "so";
+      const libFileName = `libtarget.${libExt}`;
+      const libFullPath = path.join(workDir, libFileName);
+
+      // Step 1: Prepare or compile the C target shared library
+      if (input.target_binary_path) {
+        let rawBin: Buffer;
+        try {
+          const st = await stat(input.target_binary_path);
+          if (!st.isFile()) {
+            return err(
+              new AnalysisInputError(OPERATION, undefined, [
+                {
+                  path: ["target_binary_path"],
+                  reason: "invalid_value",
+                  message: `target_binary_path is not a regular file: ${input.target_binary_path}`,
+                },
+              ]),
+            );
+          }
+          rawBin = await readFile(input.target_binary_path);
+        } catch (cause) {
+          const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+          if (code === "EACCES" || code === "EPERM") {
+            return err(
+              new AnalysisAccessDeniedError(
+                OPERATION,
+                input.target_binary_path,
+                code,
+                { cause },
+              ),
+            );
+          }
+          return err(
+            new AnalysisInputError(OPERATION, { cause }, [
+              {
+                path: ["target_binary_path"],
+                reason: "invalid_value",
+                message: `Unable to read target_binary_path at ${input.target_binary_path}`,
+              },
+            ]),
+          );
+        }
+
+        const patchedBin = patchBinaryForDynamicLoading(rawBin);
+        await writeFile(libFullPath, patchedBin);
+        await chmod(libFullPath, 0o755);
+      } else if (input.c_source_code) {
+        const cCompiler = resolveCCompilerPath();
+        if (!cCompiler) {
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              this.identity.id,
+              OPERATION,
+              "C compiler (gcc/clang/cc) not found on host system.",
+            ),
+          );
+        }
+        const cSourcePath = path.join(workDir, "target.c");
+        await writeFile(cSourcePath, input.c_source_code, "utf8");
+
+        const cArgs =
+          osPlat === "darwin"
+            ? ["-O2", "-dynamiclib", "-fPIC", cSourcePath, "-o", libFullPath, "-lm"]
+            : osPlat === "win32"
+              ? ["-O2", "-shared", cSourcePath, "-o", libFullPath]
+              : ["-O2", "-shared", "-fPIC", cSourcePath, "-o", libFullPath, "-lm"];
+
+        const cCompileRes = await this.sandboxRunner.runSandboxed({
+          command: cCompiler,
+          args: cArgs,
+          cwd: workDir,
+          timeoutMs: Math.min(input.timeout_ms, 30_000),
+          cpuLimitSeconds: 15,
+          memoryLimitMb: 1024,
+        });
+
+        if (cCompileRes.exitCode !== 0) {
+          return this.buildReport(input, rustFnName, {
+            status: "compile_error",
+            iterationsCompleted: 0,
+            boundaryCasesTested: 0,
+            counterexample: null,
+            sandboxResult: cCompileRes,
+            compilerDiagnostics:
+              (cCompileRes.stderr || cCompileRes.stdout).trim() ||
+              "C reference compilation failed.",
+          });
+        }
+      }
+
+      if (options?.signal?.aborted) {
+        return err(new AnalysisCancelledError(OPERATION));
+      }
+
+      // Step 2: Generate and compile the Rust FFI Differential Harness
+      const harnessSource = generateRustHarnessSource(
+        input,
+        libFullPath,
+        rustFnName,
+      );
+      const runnerBinName = osPlat === "win32" ? "runner.exe" : "runner";
+      const runnerBinPath = path.join(workDir, runnerBinName);
+      const buildJobs = String(
+        Math.max(1, Math.min(2, ADAPTIVE_RESOURCE_PROFILE.maxCargoJobs)),
+      );
+
+      let rustCompileRes: SandboxRunResult;
+      const cargoBin = resolveCargoPath();
+      if (input.harness_mode === "cargo-proptest" && cargoBin) {
+        const srcDir = path.join(workDir, "src");
+        await mkdir(srcDir, { recursive: true });
+        await writeFile(
+          path.join(workDir, "Cargo.toml"),
+          `[package]\nname = "argonaut_parity_runner"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "runner"\npath = "src/main.rs"\n`,
+          "utf8",
+        );
+        await writeFile(path.join(srcDir, "main.rs"), harnessSource, "utf8");
+        rustCompileRes = await this.sandboxRunner.runSandboxed({
+          command: cargoBin,
+          args: [
+            "build",
+            "--release",
+            "--offline",
+            "-j",
+            buildJobs,
+            "--target-dir",
+            path.join(workDir, "target"),
+          ],
+          cwd: workDir,
+          timeoutMs: Math.max(input.timeout_ms, 30_000),
+          cpuLimitSeconds: 20,
+          memoryLimitMb: 2048,
+          env: {
+            CARGO_BUILD_JOBS: buildJobs,
+            RUSTFLAGS: "-C codegen-units=2",
+          },
+        });
+        if (rustCompileRes.exitCode === 0) {
+          const builtBin = path.join(
+            workDir,
+            "target",
+            "release",
+            runnerBinName,
+          );
+          if (existsSync(builtBin)) {
+            const binBuf = await readFile(builtBin);
+            await writeFile(runnerBinPath, binBuf);
+            await chmod(runnerBinPath, 0o755);
+          }
+        }
+      } else {
+        const runnerRsPath = path.join(workDir, "runner.rs");
+        await writeFile(runnerRsPath, harnessSource, "utf8");
+        rustCompileRes = await this.sandboxRunner.runSandboxed({
+          command: rustcBin,
+          args: [
+            "-O",
+            "-C",
+            "codegen-units=2",
+            "--edition=2021",
+            runnerRsPath,
+            "-o",
+            runnerBinPath,
+          ],
+          cwd: workDir,
+          timeoutMs: Math.max(input.timeout_ms, 30_000),
+          cpuLimitSeconds: 20,
+          memoryLimitMb: 2048,
+          env: {
+            CARGO_BUILD_JOBS: buildJobs,
+          },
+        });
+      }
+
+      if (rustCompileRes.exitCode !== 0 || !existsSync(runnerBinPath)) {
+        return this.buildReport(input, rustFnName, {
+          status: "compile_error",
+          iterationsCompleted: 0,
+          boundaryCasesTested: 0,
+          counterexample: null,
+          sandboxResult: rustCompileRes,
+          compilerDiagnostics:
+            (rustCompileRes.stderr || rustCompileRes.stdout).trim() ||
+            "Rust candidate compilation failed.",
+        });
+      }
+
+      if (options?.signal?.aborted) {
+        return err(new AnalysisCancelledError(OPERATION));
+      }
+
+      // Step 3: Execute the compiled differential harness inside the OS sandbox
+      const execRes = await this.sandboxRunner.runSandboxed({
+        command: runnerBinPath,
+        args: [],
+        cwd: workDir,
+        timeoutMs: input.timeout_ms,
+        cpuLimitSeconds: Math.max(5, Math.ceil(input.timeout_ms / 1000)),
+        memoryLimitMb: 1024,
+      });
+
+      const markerLine = execRes.stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith(JSON_MARKER));
+
+      if (
+        execRes.timedOut ||
+        execRes.signal !== null ||
+        execRes.exitCode !== 0 ||
+        !markerLine
+      ) {
+        return this.buildReport(input, rustFnName, {
+          status: "sandbox_fault",
+          iterationsCompleted: 0,
+          boundaryCasesTested: 0,
+          counterexample: null,
+          sandboxResult: execRes,
+          compilerDiagnostics: null,
+        });
+      }
+
+      let payload: HarnessJsonPayload;
+      try {
+        payload = JSON.parse(
+          markerLine.slice(JSON_MARKER.length),
+        ) as HarnessJsonPayload;
+      } catch (cause) {
+        return err(
+          new AnalysisOutputError(
+            OPERATION,
+            "Failed to parse JSON verdict from parity harness.",
+            { cause },
+          ),
+        );
+      }
+
+      return this.buildReport(input, rustFnName, {
+        status: payload.status,
+        iterationsCompleted: payload.iterations_completed,
+        boundaryCasesTested: payload.boundary_cases_tested,
+        counterexample: payload.counterexample,
+        sandboxResult: execRes,
+        compilerDiagnostics: null,
+      });
+    } finally {
+      await rm(workDir, { recursive: true, force: true }).catch(() => {
+        // Ignore temp dir cleanup errors
+      });
+    }
+  }
+
+  private buildReport(
+    input: VerifyRustParityInput,
+    rustFnName: string,
+    outcome: {
+      readonly status:
+        | "verified_bit_exact"
+        | "diverged"
+        | "sandbox_fault"
+        | "compile_error";
+      readonly iterationsCompleted: number;
+      readonly boundaryCasesTested: number;
+      readonly counterexample: RustParityCounterexample | null;
+      readonly sandboxResult: SandboxRunResult;
+      readonly compilerDiagnostics: string | null;
+    },
+  ): Result<RustParityReport, AnalysisError> {
+    const report: RustParityReport = {
+      status: outcome.status,
+      symbol_name: input.symbol_name,
+      rust_fn_name: rustFnName,
+      harness_mode: input.harness_mode,
+      arg_types: [...input.arg_types],
+      return_type: input.return_type,
+      iterations_requested: input.iterations,
+      iterations_completed: outcome.iterationsCompleted,
+      boundary_cases_tested: outcome.boundaryCasesTested,
+      seed: input.seed,
+      float_ulp_tolerance: input.float_ulp_tolerance,
+      counterexample: outcome.counterexample,
+      sandbox_telemetry: {
+        os_platform: outcome.sandboxResult.osPlatform,
+        isolation_backend: outcome.sandboxResult.isolationBackend,
+        cpu_limit_seconds: outcome.sandboxResult.cpuLimitSeconds,
+        memory_limit_mb: outcome.sandboxResult.memoryLimitMb,
+        wall_time_ms: outcome.sandboxResult.wallTimeMs,
+        exit_code: outcome.sandboxResult.exitCode,
+        signal: outcome.sandboxResult.signal,
+        timed_out: outcome.sandboxResult.timedOut,
+        compiler_diagnostics: outcome.compilerDiagnostics,
+      },
+    };
+
+    const parsed = rustParityReportSchema.safeParse(report);
+    if (!parsed.success) {
+      return err(new AnalysisOutputError(OPERATION, parsed.error.message));
+    }
+    return ok(parsed.data);
+  }
+}

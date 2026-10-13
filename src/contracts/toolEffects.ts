@@ -56,6 +56,13 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_go_binary: evidence,
   inspect_rust_cpp_binary: evidence,
   inspect_python_frozen_binary: evidence,
+  inspect_ai_model_artifact: evidence,
+  inspect_engine_archive: evidence,
+  verify_rust_parity: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   decompile_subgraph: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
