@@ -27,6 +27,15 @@ import { registerRustCppTools } from "./registerRustCppTools.js";
 import { createPythonFrozenBinaryService } from "../composition/pythonFrozen.js";
 import type { PythonFrozenBinaryService } from "../application/pythonFrozen/PythonFrozenBinaryService.js";
 import { registerPythonFrozenTools } from "./registerPythonFrozenTools.js";
+import { createRustParityService } from "../composition/rustParity.js";
+import type { RustParityService } from "../application/rustParity/RustParityService.js";
+import { registerRustParityTools } from "./registerRustParityTools.js";
+import { createAiModelArtifactService } from "../composition/aiModel.js";
+import type { AiModelArtifactService } from "../application/aiModel/AiModelArtifactService.js";
+import { registerAiModelTools } from "./registerAiModelTools.js";
+import { createEngineArchiveService } from "../composition/engineArchive.js";
+import type { EngineArchiveService } from "../application/engineArchive/EngineArchiveService.js";
+import { registerEngineArchiveTools } from "./registerEngineArchiveTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
@@ -145,6 +154,9 @@ export interface CreateServerOptions {
   readonly goBinary?: GoBinaryService;
   readonly rustCppBinary?: RustCppBinaryService;
   readonly pythonFrozenBinary?: PythonFrozenBinaryService;
+  readonly rustParity?: RustParityService;
+  readonly aiModelArtifact?: AiModelArtifactService;
+  readonly engineArchive?: EngineArchiveService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
@@ -570,6 +582,27 @@ const registerConfiguredAnalysisTools = (
   registerPythonFrozenTools(
     server,
     options.pythonFrozenBinary ?? createPythonFrozenBinaryService(),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerRustParityTools(
+    server,
+    options.rustParity ?? createRustParityService(),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerAiModelTools(
+    server,
+    options.aiModelArtifact ?? createAiModelArtifactService(),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerEngineArchiveTools(
+    server,
+    options.engineArchive ?? createEngineArchiveService(),
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
