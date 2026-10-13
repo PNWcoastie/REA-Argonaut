@@ -1407,6 +1407,28 @@ export class RustParityVerifier implements RustParityPort {
           memorySafety,
           execRes,
         );
+      } else if (
+        input.html_report_path &&
+        payload.status === "verified_bit_exact"
+      ) {
+        const htmlReportPath = path.resolve(input.html_report_path);
+        await mkdir(path.dirname(htmlReportPath), { recursive: true });
+        const sanitizedName = rustFnName
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]/g, "_")
+          .replace(/^[^a-z]+/, "argon_");
+        const pkgName =
+          sanitizedName.length > 0 ? sanitizedName : "argon_reconstructed";
+        const dashboardHtmlContent = this.renderReconstructionDashboardHtml(
+          input,
+          pkgName,
+          rustFnName,
+          input.rust_source_code.trim(),
+          payload,
+          memorySafety,
+          execRes,
+        );
+        await writeFile(htmlReportPath, dashboardHtmlContent, "utf8");
       }
 
       return this.buildReport(input, rustFnName, {
@@ -1449,9 +1471,8 @@ export class RustParityVerifier implements RustParityPort {
     const crateIdent = pkgName.replace(/-/g, "_");
 
     const cargoTomlPath = path.join(outDir, "Cargo.toml");
-    const libRsPath = path.join( srcDir, "lib.rs");
+    const libRsPath = path.join(srcDir, "lib.rs");
     const regressionTestPath = path.join(testsDir, "parity_regression.rs");
-    const dashboardHtmlPath = path.join(outDir, "RECONSTRUCTION_DASHBOARD.html");
 
     const speedup = payload.benchmark_telemetry?.speedup_vs_c_oracle ?? 1.0;
     const safeRustNs =
@@ -1515,7 +1536,7 @@ ${exportedRustSource}
       .join("\n\n");
 
     const regressionTestContent = `#![forbid(unsafe_code)]
-//! Standalone regression test suite verifying ${ sampleVectors.length } recorded C oracle test vectors
+//! Standalone regression test suite verifying ${sampleVectors.length} recorded C oracle test vectors
 //! against the reconstructed Safe Rust implementation \`${crateIdent}::${rustFnName}\`.
 
 #[test]
@@ -1524,6 +1545,44 @@ ${assertionLines}
 }
 `;
 
+    await writeFile(cargoTomlPath, cargoTomlContent, "utf8");
+    await writeFile(libRsPath, libRsContent, "utf8");
+    await writeFile(regressionTestPath, regressionTestContent, "utf8");
+
+    let dashboardHtmlPath: string | null = null;
+    if (input.html_report_path) {
+      dashboardHtmlPath = path.resolve(input.html_report_path);
+      await mkdir(path.dirname(dashboardHtmlPath), { recursive: true });
+      const dashboardHtmlContent = this.renderReconstructionDashboardHtml(
+        input,
+        pkgName,
+        rustFnName,
+        libRsContent,
+        payload,
+        memorySafety,
+        sandboxResult,
+      );
+      await writeFile(dashboardHtmlPath, dashboardHtmlContent, "utf8");
+    }
+
+    return {
+      output_dir: outDir,
+      cargo_toml_path: cargoTomlPath,
+      lib_rs_path: libRsPath,
+      regression_test_path: regressionTestPath,
+      dashboard_html_path: dashboardHtmlPath,
+    };
+  }
+
+  private renderReconstructionDashboardHtml(
+    input: VerifyRustParityInput,
+    pkgName: string,
+    rustFnName: string,
+    libRsContent: string,
+    payload: HarnessJsonPayload,
+    memorySafety: RustParityMemorySafety,
+    sandboxResult: SandboxRunResult,
+  ): string {
     const escapeHtml = (str: string): string =>
       str
         .replace(/&/g, "&amp;")
@@ -1532,8 +1591,18 @@ ${assertionLines}
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 
+    const speedup = payload.benchmark_telemetry?.speedup_vs_c_oracle ?? 1.0;
+    const safeRustNs =
+      payload.benchmark_telemetry?.safe_rust_ns_per_call ?? 0.0;
+    const cOracleNs = payload.benchmark_telemetry?.c_oracle_ns_per_call ?? 0.0;
+    const abiSig = `(${input.arg_types.join(", ")}) -> ${input.return_type}`;
+    const sampleVectors = payload.sample_vectors ?? [];
+
     const maxNs = Math.max(cOracleNs, safeRustNs, 0.0001);
-    const cBarPct = Math.min(100, Math.max(8, Math.round((cOracleNs / maxNs) * 100)));
+    const cBarPct = Math.min(
+      100,
+      Math.max(8, Math.round((cOracleNs / maxNs) * 100)),
+    );
     const rustBarPct = Math.min(
       100,
       Math.max(8, Math.round((safeRustNs / maxNs) * 100)),
@@ -1546,236 +1615,120 @@ ${assertionLines}
     const vectorRowsHtml = sampleVectors
       .map(
         (sv, idx) => `
-          <tr class="vector-row">
-            <td class="mono">#${idx + 1}</td>
-            <td class="mono">(${escapeHtml(sv.inputs_formatted.join(", "))})</td>
-            <td class="mono">${escapeHtml(sv.output_formatted)} <span class="hex-pill">${escapeHtml(sv.output_hex)}</span></td>
-            <td class="mono">${escapeHtml(sv.output_formatted)} <span class="hex-pill">${escapeHtml(sv.output_hex)}</span></td>
-            <td><span class="match-badge">XOR Diff: 0x0 (MATCH)</span></td>
+          <tr class="vector-row border-b border-[var(--border)]">
+            <td class="py-3 px-4 font-mono text-xs text-[var(--foreground)]">#${idx + 1}</td>
+            <td class="py-3 px-4 font-mono text-xs text-[var(--foreground)]">(${escapeHtml(sv.inputs_formatted.join(", "))})</td>
+            <td class="py-3 px-4 font-mono text-xs text-[var(--foreground)]">${escapeHtml(sv.output_formatted)} <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs ml-1">${escapeHtml(sv.output_hex)}</span></td>
+            <td class="py-3 px-4 font-mono text-xs text-[var(--foreground)]">${escapeHtml(sv.output_formatted)} <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs ml-1">${escapeHtml(sv.output_hex)}</span></td>
+            <td class="py-3 px-4 text-xs"><span class="bg-[var(--primary)] text-[var(--primary-foreground)] rounded-md px-2.5 py-1 text-xs font-semibold">XOR Diff: 0x0 (MATCH)</span></td>
           </tr>`,
       )
       .join("\n");
 
-    const dashboardHtmlContent = `<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ArgonZeroG Reconstruction Dashboard — ${escapeHtml(input.symbol_name)}</title>
-  <style>
-    :root {
-      --bg: #0b0f19;
-      --card: #111827;
-      --border: #1f2937;
-      --text: #f3f4f6;
-      --muted: #9ca3af;
-      --emerald: #10b981;
-      --emerald-bg: rgba(16, 185, 129, 0.14);
-      --cyan: #06b6d4;
-      --indigo: #6366f1;
-      --amber: #f59e0b;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.5;
-      padding: 2rem;
-    }
-    .container { max-width: 1280px; margin: 0 auto; }
-    .banner {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: linear-gradient(135deg, #111827 0%, #0f172a 100%);
-      border: 1px solid var(--emerald);
-      border-radius: 12px;
-      padding: 1.5rem 2rem;
-      margin-bottom: 1.5rem;
-    }
-    .banner h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
-    .banner p { color: var(--muted); font-size: 0.92rem; margin-top: 0.25rem; }
-    .verdict-pill {
-      background: var(--emerald-bg);
-      color: var(--emerald);
-      border: 1px solid var(--emerald);
-      padding: 0.5rem 1rem;
-      border-radius: 9999px;
-      font-weight: 700;
-      font-size: 0.85rem;
-      letter-spacing: 0.05em;
-    }
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1.25rem;
-    }
-    .kpi-label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
-    .kpi-value { font-size: 1.65rem; font-weight: 800; margin: 0.35rem 0; color: var(--text); }
-    .kpi-sub { color: var(--muted); font-size: 0.85rem; }
-    .bar-group { margin-top: 0.55rem; font-size: 0.78rem; }
-    .bar-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
-    .bar-track { flex: 1; background: #1f2937; height: 8px; border-radius: 4px; overflow: hidden; }
-    .bar-fill-rust { background: var(--emerald); height: 100%; }
-    .bar-fill-c { background: var(--amber); height: 100%; }
-    .code-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-    }
-    @media (max-width: 900px) { .code-grid { grid-template-columns: 1fr; } }
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 0.75rem;
-      margin-bottom: 0.75rem;
-      font-weight: 600;
-      font-size: 0.95rem;
-    }
-    pre {
-      background: #070a12;
-      border: 1px solid #1e293b;
-      border-radius: 8px;
-      padding: 1rem;
-      overflow-x: auto;
-      font-family: "JetBrains Mono", "Fira Code", monospace;
-      font-size: 0.84rem;
-      color: #e2e8f0;
-    }
-    .search-bar {
-      width: 100%;
-      background: #070a12;
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 0.6rem 0.9rem;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      margin-bottom: 1rem;
-    }
-    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    th, td { text-align: left; padding: 0.75rem; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
-    .mono { font-family: "JetBrains Mono", "Fira Code", monospace; }
-    .hex-pill {
-      background: rgba(99, 102, 241, 0.16);
-      color: #a5b4fc;
-      padding: 0.15rem 0.45rem;
-      border-radius: 4px;
-      font-size: 0.78rem;
-      margin-left: 0.35rem;
-    }
-    .match-badge {
-      background: var(--emerald-bg);
-      color: var(--emerald);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      padding: 0.2rem 0.55rem;
-      border-radius: 6px;
-      font-weight: 600;
-      font-size: 0.76rem;
-    }
-  </style>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
 </head>
-<body>
-  <div class="container">
-    <div class="banner">
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-6">
+  <div class="max-w-7xl mx-auto space-y-6">
+    <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
-        <h1>ArgonZeroG Verified Safe Rust Reconstruction</h1>
-        <p>Symbol: <strong>${escapeHtml(input.symbol_name)}</strong> &rarr; Crate: <strong>${escapeHtml(pkgName)}::${escapeHtml(rustFnName)}</strong> &bull; Signature: <code>${escapeHtml(abiSig)}</code></p>
+        <h1 class="text-[var(--foreground)] font-bold text-xl">ArgonZeroG Verified Safe Rust Reconstruction</h1>
+        <p class="text-[var(--muted-foreground)] text-sm mt-1">Symbol: <strong>${escapeHtml(input.symbol_name)}</strong> &rarr; Crate: <strong>${escapeHtml(pkgName)}::${escapeHtml(rustFnName)}</strong> &bull; Signature: <code class="font-mono text-xs">${escapeHtml(abiSig)}</code></p>
       </div>
-      <div class="verdict-pill">VERIFIED BIT-EXACT</div>
+      <div class="bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full px-4 py-1.5 text-xs font-bold tracking-wider uppercase">VERIFIED BIT-EXACT</div>
     </div>
 
-    <div class="kpi-grid">
-      <div class="card">
-        <div class="kpi-label">Differential Parity Verdict</div>
-        <div class="kpi-value" style="color: var(--emerald);">VERIFIED BIT-EXACT</div>
-        <div class="kpi-sub">100.0% parity across ${payload.iterations_completed} random + ${payload.boundary_cases_tested} boundary vectors (seed=${input.seed})</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <div class="text-[var(--muted-foreground)] text-xs uppercase tracking-wider font-medium">Differential Parity Verdict</div>
+        <div class="text-[var(--foreground)] font-bold text-xl mt-1">VERIFIED BIT-EXACT</div>
+        <div class="text-[var(--muted-foreground)] text-xs mt-1">100.0% parity across ${payload.iterations_completed} random + ${payload.boundary_cases_tested} boundary vectors (seed=${input.seed})</div>
       </div>
 
-      <div class="card">
-        <div class="kpi-label">Memory Safety Guarantee</div>
-        <div class="kpi-value" style="color: var(--cyan);">#![forbid(unsafe_code)]</div>
-        <div class="kpi-sub">${memorySafety.candidate_unsafe_blocks} unsafe blocks &bull; Compile-time enforced</div>
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <div class="text-[var(--muted-foreground)] text-xs uppercase tracking-wider font-medium">Memory Safety Guarantee</div>
+        <div class="text-[var(--accent)] font-bold text-xl mt-1 font-mono">#![forbid(unsafe_code)]</div>
+        <div class="text-[var(--muted-foreground)] text-xs mt-1">${memorySafety.candidate_unsafe_blocks} unsafe blocks &bull; Compile-time enforced</div>
       </div>
 
-      <div class="card">
-        <div class="kpi-label">Native Speedup vs C Oracle</div>
-        <div class="kpi-value">${speedup}x</div>
-        <div class="kpi-sub">${safeRustNs} ns Safe Rust vs ${cOracleNs} ns C Oracle</div>
-        <div class="bar-group">
-          <div class="bar-row">
-            <span style="width: 68px;">Safe Rust</span>
-            <div class="bar-track"><div class="bar-fill-rust" style="width: ${rustBarPct}%;"></div></div>
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <div class="text-[var(--muted-foreground)] text-xs uppercase tracking-wider font-medium">Native Speedup vs C Oracle</div>
+        <div class="text-[var(--foreground)] font-bold text-xl mt-1 font-mono">${speedup}x</div>
+        <div class="text-[var(--muted-foreground)] text-xs mt-1">${safeRustNs} ns Safe Rust vs ${cOracleNs} ns C Oracle</div>
+        <div class="mt-2 space-y-1.5 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="w-16 text-[var(--muted-foreground)] text-xs">Safe Rust</span>
+            <div class="flex-1 bg-[var(--sidebar)] border border-[var(--border)] h-2 rounded overflow-hidden">
+              <div class="bg-[var(--primary)] h-full" style="width: ${rustBarPct}%;"></div>
+            </div>
           </div>
-          <div class="bar-row">
-            <span style="width: 68px;">C Oracle</span>
-            <div class="bar-track"><div class="bar-fill-c" style="width: ${cBarPct}%;"></div></div>
+          <div class="flex items-center gap-2">
+            <span class="w-16 text-[var(--muted-foreground)] text-xs">C Oracle</span>
+            <div class="flex-1 bg-[var(--sidebar)] border border-[var(--border)] h-2 rounded overflow-hidden">
+              <div class="bg-[var(--accent)] h-full" style="width: ${cBarPct}%;"></div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="kpi-label">Sandbox Isolation</div>
-        <div class="kpi-value" style="font-size: 1.3rem;">${escapeHtml(sandboxResult.isolationBackend)}</div>
-        <div class="kpi-sub">${sandboxResult.wallTimeMs} ms wall time &bull; ${sandboxResult.memoryLimitMb} MB cap</div>
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <div class="text-[var(--muted-foreground)] text-xs uppercase tracking-wider font-medium">Sandbox Isolation</div>
+        <div class="text-[var(--foreground)] font-bold text-lg mt-1 font-mono">${escapeHtml(sandboxResult.isolationBackend)}</div>
+        <div class="text-[var(--muted-foreground)] text-xs mt-1">${sandboxResult.wallTimeMs} ms wall time &bull; ${sandboxResult.memoryLimitMb} MB cap</div>
       </div>
     </div>
 
-    <div class="code-grid">
-      <div class="card">
-        <div class="card-header">
-          <span>Original C / Binary Target Specification</span>
-          <span style="color: var(--muted); font-size: 0.8rem;">${escapeHtml(input.symbol_name)} ${escapeHtml(abiSig)}</span>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <div class="flex items-center justify-between border-b border-[var(--border)] pb-3 mb-3">
+          <span class="text-[var(--foreground)] font-semibold text-sm">Original C / Binary Target Specification</span>
+          <span class="text-[var(--muted-foreground)] text-xs font-mono">${escapeHtml(input.symbol_name)} ${escapeHtml(abiSig)}</span>
         </div>
-        <pre><code>${escapeHtml(cSpecDisplay)}</code></pre>
+        <pre class="bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg p-4 overflow-x-auto font-mono text-xs"><code>${escapeHtml(cSpecDisplay)}</code></pre>
       </div>
 
-      <div class="card">
-        <div class="card-header">
-          <span>Reconstructed #![forbid(unsafe_code)] Safe Rust (src/lib.rs)</span>
-          <span style="color: var(--emerald); font-size: 0.8rem;">0 unsafe blocks</span>
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <div class="flex items-center justify-between border-b border-[var(--border)] pb-3 mb-3">
+          <span class="text-[var(--foreground)] font-semibold text-sm">Reconstructed #![forbid(unsafe_code)] Safe Rust (src/lib.rs)</span>
+          <span class="text-[var(--accent)] text-xs font-semibold">0 unsafe blocks</span>
         </div>
-        <pre><code>${escapeHtml(libRsContent.trim())}</code></pre>
+        <pre class="bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg p-4 overflow-x-auto font-mono text-xs"><code>${escapeHtml(libRsContent.trim())}</code></pre>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header">
-        <span>Interactive Verified Test Vector Explorer (${sampleVectors.length} Sampled Oracle Vectors)</span>
-        <span style="color: var(--muted); font-size: 0.8rem;">tests/parity_regression.rs</span>
+    <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3 mb-3">
+        <span class="text-[var(--foreground)] font-semibold text-sm">Interactive Verified Test Vector Explorer (${sampleVectors.length} Sampled Oracle Vectors)</span>
+        <span class="text-[var(--muted-foreground)] text-xs font-mono">tests/parity_regression.rs</span>
       </div>
       <input
         type="text"
         id="vectorFilter"
-        class="search-bar"
+        class="w-full bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm mb-4 focus:outline-none"
         placeholder="Filter verified test vectors by input, decimal output, or hex..."
         oninput="filterVectors(this.value)"
       />
-      <table>
-        <thead>
-          <tr>
-            <th>Vector #</th>
-            <th>Input Arguments</th>
-            <th>C Oracle Output</th>
-            <th>Safe Rust Output</th>
-            <th>Bit-Exact Parity</th>
-          </tr>
-        </thead>
-        <tbody id="vectorTableBody">
-          ${vectorRowsHtml}
-        </tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs uppercase tracking-wider">
+              <th class="py-3 px-4">Vector #</th>
+              <th class="py-3 px-4">Input Arguments</th>
+              <th class="py-3 px-4">C Oracle Output</th>
+              <th class="py-3 px-4">Safe Rust Output</th>
+              <th class="py-3 px-4">Bit-Exact Parity</th>
+            </tr>
+          </thead>
+          <tbody id="vectorTableBody">
+            ${vectorRowsHtml}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
   <script>
@@ -1791,19 +1744,6 @@ ${assertionLines}
 </body>
 </html>
 `;
-
-    await writeFile(cargoTomlPath, cargoTomlContent, "utf8");
-    await writeFile(libRsPath, libRsContent, "utf8");
-    await writeFile(regressionTestPath, regressionTestContent, "utf8");
-    await writeFile(dashboardHtmlPath, dashboardHtmlContent, "utf8");
-
-    return {
-      output_dir: outDir,
-      cargo_toml_path: cargoTomlPath,
-      lib_rs_path: libRsPath,
-      regression_test_path: regressionTestPath,
-      dashboard_html_path: dashboardHtmlPath,
-    };
   }
 
   private buildReport(

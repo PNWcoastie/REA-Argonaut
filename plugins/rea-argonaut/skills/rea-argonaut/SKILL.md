@@ -55,15 +55,34 @@ When analyzing multi-subsystem binaries, multi-artifact bundles, or porting C/C+
 ### Law 5 — Closed-Loop Mathematical Verification (`verify_rust_parity`)
 - **Never claim a C/C++-to-Rust reconstruction is equivalent by visual inspection alone.**
 - After synthesizing safe Rust from a decompiled native procedure or subgraph, invoke `verify_rust_parity`:
-  - **Input Contract**: `symbol_name`, `rust_fn_name` (optional, defaults to `symbol_name`), `rust_source_code`, `target_binary_path` (or `c_source_code`), `arg_types` (`1..8` parameters of `"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64" | "bool" | "bytes"`, where `"bytes"` bridges `(*const u8, usize)` in C ABI $\leftrightarrow$ `&[u8]` in Safe Rust), `return_type`, `iterations` (default `10000`), `seed` (default `1337420`), `float_ulp_tolerance` (default `0`), `forbid_unsafe` (default `true`), and optional `scaffold_output_dir` (automatically scaffolds a standalone `#![forbid(unsafe_code)]` `Cargo.toml` + `src/lib.rs` + `tests/parity_regression.rs` crate and an interactive `RECONSTRUCTION_DASHBOARD.html` visual report).
+  - **Input Contract**: `symbol_name`, `rust_fn_name` (optional, defaults to `symbol_name`), `rust_source_code`, `target_binary_path` (or `c_source_code`), `arg_types` (`1..8` parameters of `"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64" | "bool" | "bytes"`, where `"bytes"` bridges `(*const u8, usize)` in C ABI $\leftrightarrow$ `&[u8]` in Safe Rust), `return_type`, `iterations` (default `10000`), `seed` (default `1337420`), `float_ulp_tolerance` (default `0`), `forbid_unsafe` (default `true`), optional `scaffold_output_dir` (automatically scaffolds a pure `#![forbid(unsafe_code)]` `Cargo.toml` + `src/lib.rs` + `tests/parity_regression.rs` crate without HTML clutter), and optional `html_report_path` (`--html-report <path>`, writes an Antigravity `generative_ui`-compliant HTML parity report when `status === "verified_bit_exact"`).
   - **Sandboxed Execution & PIE Patching**: Automatically strips ELF `DF_1_PIE` (`0x08000000` in `DT_FLAGS_1`), patches Mach-O `MH_EXECUTE -> MH_DYLIB`, or sets PE `IMAGE_FILE_DLL` on a temporary workspace copy so `dlopen()` / `LoadLibrary` can load both shared libraries and PIE executables inside an OS sandbox (`linux-bwrap+prlimit`, `linux-prlimit`, `darwin-sandbox-exec`, `win32-job-object`).
   - **Output Telemetry**:
     - `status`: `"verified_bit_exact" | "diverged" | "sandbox_fault" | "compile_error"`
     - `memory_safety`: `{ forbid_unsafe_enforced: true, candidate_unsafe_blocks: 0 }`
     - `benchmark_telemetry`: `{ benchmark_iterations: 100000, c_oracle_total_ns, safe_rust_total_ns, c_oracle_ns_per_call, safe_rust_ns_per_call, speedup_vs_c_oracle }`
     - `counterexample`: `{ failing_iteration, original_inputs, shrunk_inputs, shrink_steps, c_output, rust_output, c_output_hex, rust_output_hex, bit_diff_summary, ulp_distance }`
-    - `scaffolded_crate`: `{ output_dir, cargo_toml_path, lib_rs_path, regression_test_path, dashboard_html_path }` (when `scaffold_output_dir` is supplied)
+    - `scaffolded_crate`: `{ output_dir, cargo_toml_path, lib_rs_path, regression_test_path, dashboard_html_path }` (when `scaffold_output_dir` is supplied; `dashboard_html_path` is populated only when `html_report_path` is provided)
   - If `status === "diverged"`, inspect `counterexample.shrunk_inputs`, `counterexample.c_output_hex`, `counterexample.rust_output_hex`, and `counterexample.bit_diff_summary`, patch the Rust code, and re-run `verify_rust_parity` until `status === "verified_bit_exact"`.
+
+---
+
+## The 4-Phase Recon-to-Argon Handoff Workflow (`export_recon_kit`)
+
+When reverse-engineering complex native binaries, packaged UI archives, firmware images, or AI model bundles for architectural exploration, clean-room reconstruction, or security auditing, execute the **4-Phase Recon-to-Argon Handoff Workflow**:
+
+- **Phase 1 — Universal 4-Mount Recon Kit Materialization (`export_recon_kit`):**
+  Call `export_recon_kit({ path: "/abs/path/to/target" })` to automatically detect all applicable domain mounts (`Mount 1: native-binary`, `Mount 2: packaged-ui-archive`, `Mount 3: hardware-firmware-protocol`, `Mount 4: ai-model-data`) and materialize `RECON_BLUEPRINT.md`, the Antigravity `generative_ui`-compliant `RECON_EXPLORER.html`, and the structured `recon-kit/` workspace directory (`types/`, `vtables/`, `decompiled/`, `ui-assets/`, `hardware-hal/`, `ai-model/`).
+- **Phase 2 — Interactive `RECON_EXPLORER.html` Side-Pane Review & Harness Selection:**
+  Present `RECON_EXPLORER.html` as a `UserFacing: true` Antigravity artifact in the Side Pane and use `ask_question` so the human operator selects which subsystem and which of the **4 Engineering Harnesses** to execute:
+  1. `verified-safe-rust-port` — Port a native C/C++ subsystem to `#![forbid(unsafe_code)]` Safe Rust.
+  2. `clean-room-app-ui-rebuild` — Reconstruct a modern web/desktop UI or game scene from extracted Mount 2 assets and state machines.
+  3. `hardware-hal-protocol-replay` — Synthesize a typed Rust/C HAL driver or protocol parser from Mount 3 register/frame maps.
+  4. `security-hazard-audit` — Remediate and verify latent memory, arithmetic, and deserialization hazards across all mounts.
+- **Phase 3 — Antigravity + Gemini 4 Argon Execution from `recon-kit/`:**
+  Hand off to **Antigravity + Gemini 4 Argon** (or copy the ready-to-use `argon_handoff_prompt` from `RECON_EXPLORER.html`) to build/recreate the selected library, application, UI, or hardware driver directly from `RECON_BLUEPRINT.md` and `recon-kit/` without re-running decompilers.
+- **Phase 4 — Mathematical Referee Verification (`verify_rust_parity` / `verify_reconstruction`):**
+  Run `verify_rust_parity` (with a clean pure-Rust `scaffold_output_dir` and optional `--html-report <path>`) or `verify_reconstruction` as the mathematical referee to prove bit-exact behavioral equivalence.
 
 ---
 

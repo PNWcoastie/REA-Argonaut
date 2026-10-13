@@ -20,3 +20,10 @@ When the `rea-argonaut` plugin is enabled, adhere strictly to the following reve
 ## 4. Hardware-Adaptive Concurrency (Zero Hardcoded Core Limits)
 - Never hardcode CPU core counts, worker thread counts, or single-OS path assumptions.
 - Always scale analysis pools, build jobs, and verification workers dynamically at runtime via `os.availableParallelism()`, `os.totalmem()`, and `std::thread::available_parallelism()` across Linux (`linux`), macOS (`darwin`), and Windows (`win32`).
+
+## 5. 4-Phase Recon-to-Argon Handoff Workflow (`export_recon_kit`)
+- **Phase 1 — Materialize the 4-Mount Recon Kit:** Call `export_recon_kit` on the target binary, archive, firmware image, or AI model to materialize `RECON_BLUEPRINT.md`, the Antigravity `generative_ui`-compliant `RECON_EXPLORER.html`, and the 4-Mount `recon-kit/` workspace directory.
+- **Phase 2 — Interactive Side-Pane Review & Harness Selection:** Present `RECON_EXPLORER.html` as a `UserFacing: true` Antigravity artifact in the Side Pane and use `ask_question` so the human operator selects which subsystem and which of the **4 Harnesses** (`verified-safe-rust-port`, `clean-room-app-ui-rebuild`, `hardware-hal-protocol-replay`, `security-hazard-audit`) to execute.
+- **Phase 3 — Antigravity + Gemini 4 Argon Reconstruction:** Hand off to **Antigravity + Gemini 4 Argon** to build or recreate the selected library, application, UI, or hardware driver directly from `RECON_BLUEPRINT.md` and `recon-kit/` without re-running decompilers.
+- **Phase 4 — Mathematical Referee Verification:** Run `verify_rust_parity` (with a clean pure-Rust `scaffold_output_dir` and optional `--html-report <path>`) or `verify_reconstruction` as the mathematical referee.
+
