@@ -1,0 +1,45 @@
+# Environment & Secrets (NEVER COMMIT)
+.env
+.env.*
+
+# Local Agent Scratch State (NEVER COMMIT)
+.agents/
+.codex/
+.devin/
+.factory/
+codedb.snapshot
+
+# Node & TypeScript Build Output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+
+# Testing & Caches
+.pytest_cache/
+htmlcov/
+.coverage
+coverage/
+.vitest/
+.vitest-reports/
+test-results.xml
+.turbo/
+.cache/
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
