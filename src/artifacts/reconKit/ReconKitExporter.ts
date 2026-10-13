@@ -1500,6 +1500,9 @@ export class ReconKitExporter implements ReconKitPort {
       );
     }
     const normalizedInput = parsedInput.data;
+    const shouldMockUiConcepts = Boolean(
+      normalizedInput.mock_ui_concepts || normalizedInput.include_explorer_html,
+    );
     const targetPath = path.resolve(rawTarget);
 
     let handle: FileHandle;
@@ -2098,7 +2101,7 @@ export class ReconKitExporter implements ReconKitPort {
 
       const mount2KitPaths = [
         "ui-preview/ui_inventory.json",
-        "ui-preview/index.html",
+        ...(shouldMockUiConcepts ? ["ui-preview/index.html"] : []),
         "scripts/module_inventory.md",
         "ipc_and_routes.md",
       ];
@@ -2120,13 +2123,15 @@ export class ReconKitExporter implements ReconKitPort {
         "Structured JSON inventory of extracted UI views, stylesheets, scripts, scenes, and assets.",
       );
 
-      await writeKitFile(
-        "ui-preview/index.html",
-        generateUiPreviewHtml(targetBasename, detectedFormat, uiPreviewItems),
-        "packaged-ui-archive",
-        "ui-preview",
-        "Self-contained dark-mode HTML catalog previewing extracted UI screens, assets, and module routes.",
-      );
+      if (shouldMockUiConcepts) {
+        await writeKitFile(
+          "ui-preview/index.html",
+          generateUiPreviewHtml(targetBasename, detectedFormat, uiPreviewItems),
+          "packaged-ui-archive",
+          "ui-preview",
+          "Self-contained dark-mode HTML catalog previewing extracted UI screens, assets, and module routes.",
+        );
+      }
 
       await writeKitFile(
         "scripts/module_inventory.md",
@@ -2454,7 +2459,7 @@ export class ReconKitExporter implements ReconKitPort {
           "Rebuilds packaged Electron/Unity/Godot/Win32 UI views, IPC routes, and asset trees into a clean, modern TypeScript + Web UI workbench.",
         kit_inputs: [
           "ui-preview/ui_inventory.json",
-          "ui-preview/index.html",
+          ...(shouldMockUiConcepts ? ["ui-preview/index.html"] : []),
           "scripts/module_inventory.md",
           "ipc_and_routes.md",
         ],
@@ -2546,7 +2551,7 @@ export class ReconKitExporter implements ReconKitPort {
     );
 
     let explorerHtmlPath: string | null = null;
-    if (normalizedInput.include_explorer_html) {
+    if (shouldMockUiConcepts) {
       const reportForExplorer: Omit<ReconKitReport, "explorer_html_path"> = {
         ...preliminaryReportWithoutExplorer,
         materialized_files: materializedFiles,

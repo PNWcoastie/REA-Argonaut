@@ -145,7 +145,7 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
     }
   });
 
-  it("Mount 1 (native-binary): clusters C++ RTTI classes into subsystems and materializes #![forbid(unsafe_code)] Rust types, C headers, vtable JSON, blueprint, and explorer HTML", async () => {
+  it("Mount 1 (native-binary): clusters C++ RTTI classes into subsystems and materializes #![forbid(unsafe_code)] Rust types, C headers, vtable JSON, and blueprint with zero HTML files by default", async () => {
     const binPath = path.join(tempDir, "generals_engine.elf");
     const outDir = path.join(tempDir, "generals-recon-kit");
     const elfBuf = buildSyntheticElfWithMsvcRtti([
@@ -168,12 +168,13 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
     expect(report.primary_mount).toBe("native-binary");
     expect(report.detected_mounts).toContain("native-binary");
     expect(report.subsystems.length).toBeGreaterThanOrEqual(3);
+    expect(report.explorer_html_path).toBeNull();
+    expect(
+      report.materialized_files.filter((f) => f.relative_path.endsWith(".html")),
+    ).toHaveLength(0);
 
     const blueprintStat = await stat(path.join(outDir, "RECON_BLUEPRINT.md"));
     expect(blueprintStat.isFile()).toBe(true);
-
-    const explorerStat = await stat(path.join(outDir, "RECON_EXPLORER.html"));
-    expect(explorerStat.isFile()).toBe(true);
 
     const rustTypes = await readFile(
       path.join(outDir, "types/recovered_types.rs"),
@@ -208,32 +209,35 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
     );
   });
 
-  it("Mount 2 (packaged-ui-archive): parses Electron .asar archive and materializes ui-preview/index.html, ui-preview/ui_inventory.json, scripts/module_inventory.md, and ipc_and_routes.md", async () => {
+  it("Mount 2 (packaged-ui-archive): emits zero .html files by default (mock_ui_concepts: false) and generates ui-preview/index.html + RECON_EXPLORER.html with zero <button elements when opted in (mock_ui_concepts: true)", async () => {
     const asarPath = path.join(tempDir, "app.asar");
-    const outDir = path.join(tempDir, "asar-recon-kit");
+    const outDirDefault = path.join(tempDir, "asar-recon-kit-default");
+    const outDirOptIn = path.join(tempDir, "asar-recon-kit-optin");
     await writeFile(asarPath, buildSyntheticAsarArchive());
 
     const exporter = new ReconKitExporter();
-    const res = await exporter.exportKit({
+
+    // 1. Default run (mock_ui_concepts: false) -> 0 .html files
+    const defaultRes = await exporter.exportKit({
       target_path: asarPath,
-      output_dir: outDir,
+      output_dir: outDirDefault,
     });
 
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
+    expect(defaultRes.ok).toBe(true);
+    if (!defaultRes.ok) return;
 
-    const report = res.value;
-    expect(report.primary_mount).toBe("packaged-ui-archive");
-    expect(report.ui_preview_items.length).toBeGreaterThanOrEqual(3);
-
-    const uiHtml = await readFile(
-      path.join(outDir, "ui-preview/index.html"),
-      "utf8",
-    );
-    expect(uiHtml).toContain("src/index.html");
+    const defaultReport = defaultRes.value;
+    expect(defaultReport.primary_mount).toBe("packaged-ui-archive");
+    expect(defaultReport.ui_preview_items.length).toBeGreaterThanOrEqual(3);
+    expect(defaultReport.explorer_html_path).toBeNull();
+    expect(
+      defaultReport.materialized_files.filter((f) =>
+        f.relative_path.endsWith(".html"),
+      ),
+    ).toHaveLength(0);
 
     const uiInvRaw = await readFile(
-      path.join(outDir, "ui-preview/ui_inventory.json"),
+      path.join(outDirDefault, "ui-preview/ui_inventory.json"),
       "utf8",
     );
     const uiInv = JSON.parse(uiInvRaw) as {
@@ -246,16 +250,45 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
     );
 
     const modInv = await readFile(
-      path.join(outDir, "scripts/module_inventory.md"),
+      path.join(outDirDefault, "scripts/module_inventory.md"),
       "utf8",
     );
     expect(modInv).toContain("src/main.js");
 
     const ipcRoutes = await readFile(
-      path.join(outDir, "ipc_and_routes.md"),
+      path.join(outDirDefault, "ipc_and_routes.md"),
       "utf8",
     );
     expect(ipcRoutes).toContain("src/main.js");
+
+    // 2. Opt-in run (mock_ui_concepts: true) -> ui-preview/index.html + RECON_EXPLORER.html with zero <button elements
+    const optInRes = await exporter.exportKit({
+      target_path: asarPath,
+      output_dir: outDirOptIn,
+      mock_ui_concepts: true,
+    });
+
+    expect(optInRes.ok).toBe(true);
+    if (!optInRes.ok) return;
+
+    const optInReport = optInRes.value;
+    expect(optInReport.explorer_html_path).toBe(
+      path.join(outDirOptIn, "RECON_EXPLORER.html"),
+    );
+
+    const uiHtml = await readFile(
+      path.join(outDirOptIn, "ui-preview/index.html"),
+      "utf8",
+    );
+    expect(uiHtml).toContain("src/index.html");
+    expect(uiHtml.toLowerCase()).not.toContain("<button");
+
+    const explorerHtml = await readFile(
+      path.join(outDirOptIn, "RECON_EXPLORER.html"),
+      "utf8",
+    );
+    expect(explorerHtml).toContain("src/index.html");
+    expect(explorerHtml.toLowerCase()).not.toContain("<button");
   });
 
   it("Mount 3 (hardware-firmware-protocol): parses SVD/MMIO definitions and materializes hardware/memory_and_mmio_map.md and #![forbid(unsafe_code)] hardware/register_hal.rs", async () => {
@@ -301,6 +334,10 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
     const report = res.value;
     expect(report.primary_mount).toBe("hardware-firmware-protocol");
     expect(report.hardware_or_protocol_items.length).toBeGreaterThanOrEqual(2);
+    expect(report.explorer_html_path).toBeNull();
+    expect(
+      report.materialized_files.filter((f) => f.relative_path.endsWith(".html")),
+    ).toHaveLength(0);
 
     const mmioMap = await readFile(
       path.join(outDir, "hardware/memory_and_mmio_map.md"),
@@ -336,6 +373,10 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
 
     const report = res.value;
     expect(report.primary_mount).toBe("ai-model-data");
+    expect(report.explorer_html_path).toBeNull();
+    expect(
+      report.materialized_files.filter((f) => f.relative_path.endsWith(".html")),
+    ).toHaveLength(0);
 
     const modelCard = await readFile(
       path.join(outDir, "ai/model_card_and_architecture.md"),

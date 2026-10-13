@@ -22,8 +22,8 @@ When the `rea-argonaut` plugin is enabled, adhere strictly to the following reve
 - Always scale analysis pools, build jobs, and verification workers dynamically at runtime via `os.availableParallelism()`, `os.totalmem()`, and `std::thread::available_parallelism()` across Linux (`linux`), macOS (`darwin`), and Windows (`win32`).
 
 ## 5. 4-Phase Recon-to-Argon Handoff Workflow (`export_recon_kit`)
-- **Phase 1 — Materialize the 4-Mount Recon Kit:** Call `export_recon_kit` on the target binary, archive, firmware image, or AI model to materialize `RECON_BLUEPRINT.md`, the Antigravity `generative_ui`-compliant `RECON_EXPLORER.html`, and the 4-Mount `recon-kit/` workspace directory.
-- **Phase 2 — Interactive Side-Pane Review & Harness Selection:** Present `RECON_EXPLORER.html` as a `UserFacing: true` Antigravity artifact in the Side Pane and use `ask_question` so the human operator selects which subsystem and which of the **4 Harnesses** (`verified-safe-rust-port`, `clean-room-app-ui-rebuild`, `hardware-hal-protocol-replay`, `security-hazard-audit`) to execute.
-- **Phase 3 — Antigravity + Gemini 4 Argon Reconstruction:** Hand off to **Antigravity + Gemini 4 Argon** to build or recreate the selected library, application, UI, or hardware driver directly from `RECON_BLUEPRINT.md` and `recon-kit/` without re-running decompilers.
-- **Phase 4 — Mathematical Referee Verification:** Run `verify_rust_parity` (with a clean pure-Rust `scaffold_output_dir` and optional `--html-report <path>`) or `verify_reconstruction` as the mathematical referee.
+- **Phase 1 — Materialize the 4-Mount Recon Kit (`export_recon_kit`):** Produces `RECON_BLUEPRINT.md` and the 4-Mount `recon-kit/` directory (`0` unsolicited `.html` files by default; `mock_ui_concepts: false`).
+- **Phase 2 — Native `ask_question` Harness Selection (& Opt-In UI Concept Mock):** Always use Antigravity's native `ask_question` tool (never clickable HTML buttons) so the user selects which subsystem and which of the **4 Harnesses** (`verified-safe-rust-port`, `clean-room-app-ui-rebuild`, `hardware-hal-protocol-replay`, `security-hazard-audit`) to execute. If Mount 2 UI assets were discovered, include an option in `ask_question` asking if the user wants to generate a visual `generative_ui` UI concept mock (`mock_ui_concepts: true`).
+- **Phase 3 — Antigravity + Gemini 4 Argon Reconstruction:** Build/recreate from `RECON_BLUEPRINT.md` and `recon-kit/`.
+- **Phase 4 — Mathematical Referee Verification:** Run `verify_rust_parity` (clean Cargo crate by default) or `verify_reconstruction`.
 

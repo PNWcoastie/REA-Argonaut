@@ -118,6 +118,7 @@ export class ReconKitService {
             max_subsystems: input.data.max_subsystems,
             max_classes: input.data.max_classes,
             max_entries: input.data.max_entries,
+            mock_ui_concepts: input.data.mock_ui_concepts,
             include_explorer_html: input.data.include_explorer_html,
           },
           result: value,

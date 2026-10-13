@@ -4,7 +4,6 @@ import type {
   ReconHarnessRecommendation,
   ReconHardwareRegisterItem,
   ReconKitReport,
-  ReconMaterializedFile,
   ReconMountKind,
   ReconSubsystemEntry,
   ReconUiPreviewItem,
@@ -64,6 +63,72 @@ function formatHarnessLabel(harnessId: ReconHarnessKind): string {
   }
 }
 
+function renderUiConceptMockCard(item: ReconUiPreviewItem): string {
+  const kindLabelMap: Record<ReconUiPreviewItem["asset_kind"], string> = {
+    "html-view": "View / Route Surface",
+    stylesheet: "Theme & Layout Tokens",
+    "script-module": "State & Controller Logic",
+    "svg-or-image": "Vector / Bitmap Asset",
+    "scene-or-prefab": "Engine Scene / Prefab Hierarchy",
+    "pe-dialog-or-icon": "Native Win32 Dialog / Icon Resource",
+    "config-manifest": "Application Manifest & Routing",
+  };
+
+  let wireframePreview = "";
+  switch (item.asset_kind) {
+    case "html-view":
+    case "pe-dialog-or-icon":
+      wireframePreview = `<div class="bg-[var(--sidebar)] border border-[var(--border)] rounded-lg p-3 space-y-2">
+        <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+          <span class="text-xs font-mono font-semibold text-[var(--foreground)]">${escapeHtml(path.basename(item.logical_path))}</span>
+          <div class="flex gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-[var(--border)]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[var(--border)]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[var(--primary)]"></span>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 pt-1">
+          <div class="col-span-1 bg-[var(--card)] border border-[var(--border)] rounded p-2 text-xs text-[var(--muted-foreground)]">Nav / Tree</div>
+          <div class="col-span-2 bg-[var(--card)] border border-[var(--border)] rounded p-2 text-xs text-[var(--foreground)]">Primary Viewport Surface</div>
+        </div>
+      </div>`;
+      break;
+    case "scene-or-prefab":
+      wireframePreview = `<div class="bg-[var(--sidebar)] border border-[var(--border)] rounded-lg p-3 space-y-1.5 font-mono text-xs">
+        <div class="text-[var(--accent)] font-semibold">SceneRoot &bull; ${escapeHtml(path.basename(item.logical_path))}</div>
+        <div class="pl-3 text-[var(--muted-foreground)]">&vdash; CameraRig / Viewport2D</div>
+        <div class="pl-3 text-[var(--muted-foreground)]">&vdash; UIOverlayCanvas &amp; HUD</div>
+        <div class="pl-3 text-[var(--muted-foreground)]">&boxur; InteractiveControllerNode</div>
+      </div>`;
+      break;
+    case "stylesheet":
+      wireframePreview = `<div class="bg-[var(--sidebar)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
+        <span class="w-5 h-5 rounded bg-[var(--primary)] border border-[var(--border)]"></span>
+        <span class="w-5 h-5 rounded bg-[var(--secondary)] border border-[var(--border)]"></span>
+        <span class="w-5 h-5 rounded bg-[var(--accent)] border border-[var(--border)]"></span>
+        <span class="text-xs font-mono text-[var(--muted-foreground)] ml-1">Design System &amp; Layout Rules</span>
+      </div>`;
+      break;
+    default:
+      wireframePreview = `<div class="bg-[var(--sidebar)] border border-[var(--border)] rounded-lg p-3 font-mono text-xs text-[var(--muted-foreground)]">
+        Asset Binding: <span class="text-[var(--foreground)]">${escapeHtml(item.logical_path)}</span>
+      </div>`;
+      break;
+  }
+
+  return `<div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm flex flex-col justify-between gap-3">
+    <div class="space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs font-mono">${escapeHtml(kindLabelMap[item.asset_kind])}</span>
+        <span class="text-[var(--muted-foreground)] text-xs font-mono">${escapeHtml(formatBytes(item.size_bytes))}</span>
+      </div>
+      <h4 class="text-[var(--foreground)] font-semibold text-sm font-mono break-all">${escapeHtml(item.logical_path)}</h4>
+      <p class="text-[var(--muted-foreground)] text-xs">${escapeHtml(item.summary)}</p>
+    </div>
+    ${wireframePreview}
+  </div>`;
+}
+
 function renderSubsystemCard(subsystem: ReconSubsystemEntry): string {
   const samplePills =
     subsystem.sample_items.length > 0
@@ -83,27 +148,16 @@ function renderSubsystemCard(subsystem: ReconSubsystemEntry): string {
               `<code class="inline-block bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs font-mono">${escapeHtml(relPath)}</code>`,
           )
           .join("\n")
-      : `<span class="text-[var(--muted-foreground)] text-xs italic">Root blueprint</span>`;
+      : `<span class="text-[var(--muted-foreground)] text-xs italic">RECON_BLUEPRINT.md</span>`;
 
   const harnessBadgesHtml = subsystem.recommended_harnesses
     .map(
       (harnessId) =>
-        `<button type="button" onclick="selectHarnessTrack('${escapeHtml(harnessId)}')" class="inline-flex items-center gap-1 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-md px-2.5 py-1 text-xs font-medium hover:opacity-90 transition-opacity">${escapeHtml(formatHarnessLabel(harnessId))} &rarr;</button>`,
+        `<span class="inline-flex items-center bg-[var(--primary)] text-[var(--primary-foreground)] rounded-md px-2.5 py-1 text-xs font-medium">${escapeHtml(formatHarnessLabel(harnessId))}</span>`,
     )
     .join("\n");
 
-  const searchBlob = [
-    subsystem.id,
-    subsystem.name,
-    subsystem.mount,
-    subsystem.summary,
-    ...subsystem.sample_items,
-    ...subsystem.kit_relative_paths,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  return `<div class="subsystem-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm flex flex-col justify-between gap-4" data-mount="${escapeHtml(subsystem.mount)}" data-search="${escapeHtml(searchBlob)}">
+  return `<div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm flex flex-col justify-between gap-4">
     <div>
       <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
         <div>
@@ -145,26 +199,13 @@ function renderSubsystemCard(subsystem: ReconSubsystemEntry): string {
     </div>
 
     <div class="pt-3 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-2">
-      <span class="text-[var(--muted-foreground)] text-xs font-medium">Recommended Harnesses:</span>
+      <span class="text-[var(--muted-foreground)] text-xs font-medium">Compatible Harnesses:</span>
       <div class="flex flex-wrap gap-2">${harnessBadgesHtml}</div>
     </div>
   </div>`;
 }
 
-function renderHarnessCard(
-  harness: ReconHarnessRecommendation,
-  index: number,
-): string {
-  const targetPills =
-    harness.target_subsystems.length > 0
-      ? harness.target_subsystems
-          .map(
-            (sub) =>
-              `<span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs font-mono">${escapeHtml(sub)}</span>`,
-          )
-          .join("\n")
-      : `<span class="text-[var(--muted-foreground)] text-xs">All discovered subsystems</span>`;
-
+function renderHarnessReferenceCard(harness: ReconHarnessRecommendation): string {
   const inputPills =
     harness.kit_inputs.length > 0
       ? harness.kit_inputs
@@ -175,107 +216,43 @@ function renderHarnessCard(
           .join("\n")
       : `<span class="text-[var(--muted-foreground)] text-xs">RECON_BLUEPRINT.md</span>`;
 
-  const promptId = `argon-prompt-${index}`;
-  const btnId = `copy-btn-${index}`;
-
-  return `<div id="harness-card-${escapeHtml(harness.harness_id)}" class="harness-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm flex flex-col justify-between gap-4">
-    <div>
-      <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
-        <div>
-          <span class="text-[var(--accent)] text-xs font-mono uppercase tracking-wider">${escapeHtml(harness.harness_id)}</span>
-          <h3 class="text-[var(--foreground)] font-semibold text-lg mt-0.5">${escapeHtml(harness.title)}</h3>
-        </div>
-        <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium">${escapeHtml(formatMountLabel(harness.mount))}</span>
-      </div>
-
-      <p class="text-[var(--muted-foreground)] text-sm mb-4">${escapeHtml(harness.rationale)}</p>
-
-      <div class="mb-3">
-        <div class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-1.5">Target Subsystems</div>
-        <div class="flex flex-wrap gap-1.5">${targetPills}</div>
-      </div>
-
-      <div class="mb-3">
-        <div class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-1.5">recon-kit/ Input Files</div>
-        <div class="flex flex-wrap gap-1.5">${inputPills}</div>
-      </div>
-
-      <div class="mb-3">
-        <div class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-1.5">Phase 4 Mathematical Verification Command</div>
-        <pre class="bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg p-3 text-xs font-mono overflow-x-auto"><code>${escapeHtml(harness.verification_command)}</code></pre>
-      </div>
-
+  return `<div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm space-y-3">
+    <div class="flex flex-wrap items-start justify-between gap-2">
       <div>
-        <div class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-1.5">Phase 3 Gemini 4 Argon Handoff Prompt</div>
-        <pre id="${promptId}" class="bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg p-3 text-xs font-mono whitespace-pre-wrap break-words">${escapeHtml(harness.argon_handoff_prompt)}</pre>
+        <span class="text-[var(--accent)] text-xs font-mono uppercase tracking-wider">${escapeHtml(harness.harness_id)}</span>
+        <h3 class="text-[var(--foreground)] font-semibold text-base mt-0.5">${escapeHtml(harness.title)}</h3>
       </div>
+      <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium">${escapeHtml(formatMountLabel(harness.mount))}</span>
     </div>
-
-    <div class="pt-3 border-t border-[var(--border)] flex items-center justify-between gap-3">
-      <span class="text-[var(--muted-foreground)] text-xs">Ready for Phase 3 Antigravity + Gemini 4 Argon execution</span>
-      <button
-        id="${btnId}"
-        type="button"
-        onclick="copyArgonPrompt('${promptId}', '${btnId}')"
-        class="bg-[var(--primary)] text-[var(--primary-foreground)] rounded-lg px-4 py-2 text-xs font-semibold hover:opacity-90 transition-opacity"
-      >
-        Copy Argon Handoff Prompt
-      </button>
+    <p class="text-[var(--muted-foreground)] text-sm">${escapeHtml(harness.rationale)}</p>
+    <div>
+      <div class="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider mb-1">recon-kit/ Inputs</div>
+      <div class="flex flex-wrap gap-1.5">${inputPills}</div>
     </div>
   </div>`;
 }
 
-function renderMaterializedFileRow(file: ReconMaterializedFile): string {
-  const searchBlob = [
-    file.relative_path,
-    file.mount,
-    file.category,
-    file.description,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  return `<tr class="materialized-file-row border-b border-[var(--border)]" data-mount="${escapeHtml(file.mount)}" data-search="${escapeHtml(searchBlob)}">
-    <td class="py-3 px-4 font-mono text-xs text-[var(--foreground)]">
-      <div>${escapeHtml(file.relative_path)}</div>
-      <div class="text-[var(--muted-foreground)] text-xs truncate max-w-md">${escapeHtml(file.absolute_path)}</div>
-    </td>
-    <td class="py-3 px-4 text-xs">
-      <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-2.5 py-0.5 text-xs font-medium">${escapeHtml(formatMountLabel(file.mount))}</span>
-    </td>
-    <td class="py-3 px-4 text-xs font-mono text-[var(--accent)]">${escapeHtml(file.category)}</td>
-    <td class="py-3 px-4 text-xs font-mono text-[var(--muted-foreground)]">${escapeHtml(formatBytes(file.size_bytes))} (${file.size_bytes} B)</td>
-    <td class="py-3 px-4 text-sm text-[var(--muted-foreground)]">${escapeHtml(file.description)}</td>
-  </tr>`;
-}
-
-function renderUiPreviewRow(item: ReconUiPreviewItem): string {
-  return `<tr class="border-b border-[var(--border)]">
-    <td class="py-3 px-4 font-mono text-xs text-[var(--foreground)]">${escapeHtml(item.logical_path)}</td>
-    <td class="py-3 px-4 text-xs">
-      <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs font-mono">${escapeHtml(item.asset_kind)}</span>
-    </td>
-    <td class="py-3 px-4 font-mono text-xs text-[var(--muted-foreground)]">${escapeHtml(formatBytes(item.size_bytes))}</td>
-    <td class="py-3 px-4 text-sm text-[var(--muted-foreground)]">${escapeHtml(item.summary)}</td>
-  </tr>`;
-}
-
 function renderHardwareRegisterRow(item: ReconHardwareRegisterItem): string {
   return `<tr class="border-b border-[var(--border)]">
-    <td class="py-3 px-4 font-mono text-xs font-semibold text-[var(--foreground)]">${escapeHtml(item.name)}</td>
-    <td class="py-3 px-4 font-mono text-xs text-[var(--accent)]">${escapeHtml(item.address_or_offset)}</td>
-    <td class="py-3 px-4 font-mono text-xs text-[var(--muted-foreground)]">${item.width_bits}-bit</td>
-    <td class="py-3 px-4 font-mono text-xs">
+    <td class="py-2.5 px-4 font-mono text-xs font-semibold text-[var(--foreground)]">${escapeHtml(item.name)}</td>
+    <td class="py-2.5 px-4 font-mono text-xs text-[var(--accent)]">${escapeHtml(item.address_or_offset)}</td>
+    <td class="py-2.5 px-4 font-mono text-xs text-[var(--muted-foreground)]">${item.width_bits}-bit</td>
+    <td class="py-2.5 px-4 font-mono text-xs">
       <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded px-2 py-0.5 text-xs">${escapeHtml(item.access)}</span>
     </td>
-    <td class="py-3 px-4 text-sm text-[var(--muted-foreground)]">${escapeHtml(item.description)}</td>
+    <td class="py-2.5 px-4 text-sm text-[var(--muted-foreground)]">${escapeHtml(item.description)}</td>
   </tr>`;
 }
 
 /**
- * Renders the interactive Antigravity `generative_ui`-compliant `RECON_EXPLORER.html`
- * workbench for inspecting a 4-Mount `export_recon_kit` report and selecting an
- * engineering harness for Gemini 4 Argon handoff.
+ * Renders the opt-in Antigravity `generative_ui`-compliant static visual
+ * UI Concept & Architecture Mockup (`RECON_EXPLORER.html`) when `mock_ui_concepts: true`.
+ *
+ * Strictly adheres to Antigravity design principles:
+ * - Uses `https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js`
+ * - Uses injected host theme variables (`--background`, `--card`, `--foreground`, `--muted-foreground`, `--border`, `--primary`)
+ * - Zero `:root` overrides, `>= 12px` (`text-xs`) typography
+ * - Purely visual/static layout so it never competes with Antigravity's native `ask_question` tool.
  */
 export function renderReconExplorerHtml(
   report: Omit<ReconKitReport, "explorer_html_path">,
@@ -292,6 +269,15 @@ export function renderReconExplorerHtml(
     })
     .join("\n");
 
+  const uiMockCardsHtml =
+    report.ui_preview_items.length > 0
+      ? report.ui_preview_items
+          .map((item) => renderUiConceptMockCard(item))
+          .join("\n")
+      : `<div class="bg-[var(--sidebar)] border border-[var(--border)] rounded-xl p-5 text-sm text-[var(--muted-foreground)]">
+          No Mount 2 packaged UI views, stylesheets, scenes, or dialog resources were detected in this target. The clean-room architecture mockup below reflects the recovered native/firmware/AI subsystems.
+        </div>`;
+
   const subsystemCardsHtml =
     report.subsystems.length > 0
       ? report.subsystems.map((sub) => renderSubsystemCard(sub)).join("\n")
@@ -299,36 +285,39 @@ export function renderReconExplorerHtml(
 
   const harnessCardsHtml =
     report.harnesses.length > 0
-      ? report.harnesses
-          .map((harness, idx) => renderHarnessCard(harness, idx))
-          .join("\n")
-      : `<div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-6 text-sm text-[var(--muted-foreground)]">No engineering harnesses generated.</div>`;
+      ? report.harnesses.map((h) => renderHarnessReferenceCard(h)).join("\n")
+      : "";
 
-  const materializedRowsHtml =
-    report.materialized_files.length > 0
-      ? report.materialized_files
-          .map((file) => renderMaterializedFileRow(file))
-          .join("\n")
-      : `<tr><td colspan="5" class="py-4 px-4 text-sm text-[var(--muted-foreground)]">No materialized files recorded.</td></tr>`;
-
-  const uiPreviewRowsHtml =
-    report.ui_preview_items.length > 0
-      ? report.ui_preview_items.map((item) => renderUiPreviewRow(item)).join("\n")
-      : `<tr><td colspan="4" class="py-4 px-4 text-sm text-[var(--muted-foreground)]">No Mount 2 packaged UI/scene assets detected in this artifact.</td></tr>`;
-
-  const hardwareRowsHtml =
+  const hardwareSectionHtml =
     report.hardware_or_protocol_items.length > 0
-      ? report.hardware_or_protocol_items
-          .map((item) => renderHardwareRegisterRow(item))
-          .join("\n")
-      : `<tr><td colspan="5" class="py-4 px-4 text-sm text-[var(--muted-foreground)]">No Mount 3 peripheral registers or protocol frames detected in this artifact.</td></tr>`;
+      ? `<section class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm overflow-x-auto space-y-3">
+          <div>
+            <h2 class="text-[var(--foreground)] font-semibold text-lg">Mount 3 — Hardware Peripheral Register &amp; Protocol Map (${report.hardware_or_protocol_items.length})</h2>
+            <p class="text-[var(--muted-foreground)] text-xs">Recovered memory-mapped I/O (MMIO) registers, SVD/DeviceTree nodes, and protocol frame layouts.</p>
+          </div>
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs uppercase tracking-wider">
+                <th class="py-2.5 px-4">Register / Field</th>
+                <th class="py-2.5 px-4">Address / Offset</th>
+                <th class="py-2.5 px-4">Width</th>
+                <th class="py-2.5 px-4">Access</th>
+                <th class="py-2.5 px-4">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${report.hardware_or_protocol_items.map((item) => renderHardwareRegisterRow(item)).join("\n")}
+            </tbody>
+          </table>
+        </section>`
+      : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ArgonZeroG Recon Explorer — ${escapeHtml(targetFileName)}</title>
+  <title>ArgonZeroG UI Concept &amp; Architecture Mockup — ${escapeHtml(targetFileName)}</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-6">
@@ -341,7 +330,7 @@ export function renderReconExplorerHtml(
             <span class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-md px-2.5 py-1 text-xs font-mono font-semibold uppercase">${escapeHtml(report.detected_format)}</span>
             ${mountPillsHtml}
           </div>
-          <h1 class="text-[var(--foreground)] font-bold text-2xl tracking-tight">${escapeHtml(targetFileName)}</h1>
+          <h1 class="text-[var(--foreground)] font-bold text-2xl tracking-tight">${escapeHtml(targetFileName)} — UI Concept &amp; Architecture Mockup</h1>
           <p class="text-[var(--muted-foreground)] text-xs font-mono break-all">Target: ${escapeHtml(report.target_path)}</p>
         </div>
 
@@ -388,254 +377,44 @@ export function renderReconExplorerHtml(
       </div>
     </div>
 
-    <!-- Interactive Navigation Bar + Global Search & Mount Filter -->
-    <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
-        <div class="flex flex-wrap gap-2" role="tablist">
-          <button
-            id="tab-btn-subsystems"
-            type="button"
-            onclick="switchReconTab('subsystems')"
-            class="recon-tab-btn bg-[var(--primary)] text-[var(--primary-foreground)] rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
-          >
-            1. Subsystems &amp; Architecture (${report.subsystems.length})
-          </button>
-          <button
-            id="tab-btn-harnesses"
-            type="button"
-            onclick="switchReconTab('harnesses')"
-            class="recon-tab-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-lg px-4 py-2 text-sm font-medium transition-colors"
-          >
-            2. Selectable Engineering Harnesses (${report.harnesses.length})
-          </button>
-          <button
-            id="tab-btn-materialized_files"
-            type="button"
-            onclick="switchReconTab('materialized_files')"
-            class="recon-tab-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-lg px-4 py-2 text-sm font-medium transition-colors"
-          >
-            3. Materialized recon-kit/ Files (${report.materialized_files.length})
-          </button>
-          <button
-            id="tab-btn-domain_previews"
-            type="button"
-            onclick="switchReconTab('domain_previews')"
-            class="recon-tab-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-lg px-4 py-2 text-sm font-medium transition-colors"
-          >
-            4. Domain Previews (${report.ui_preview_items.length + report.hardware_or_protocol_items.length})
-          </button>
+    <!-- Visual UI Concept Mockup Wireframes -->
+    <section class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-6 shadow-sm space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
+        <div>
+          <h2 class="text-[var(--foreground)] font-semibold text-lg">Extracted UI Concept &amp; Surface Wireframes (${report.ui_preview_items.length})</h2>
+          <p class="text-[var(--muted-foreground)] text-sm">Visual concept mockup of discovered views, stylesheets, scripts, icons/SVGs, scenes, and native dialogs for clean-room UI reconstruction.</p>
         </div>
-
-        <div class="flex flex-wrap items-center gap-1.5">
-          <span class="text-[var(--muted-foreground)] text-xs font-medium mr-1">Mount Filter:</span>
-          <button type="button" onclick="setMountFilter('all')" data-mount-btn="all" class="mount-filter-btn bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full px-3 py-1 text-xs font-semibold">All Mounts</button>
-          <button type="button" onclick="setMountFilter('native-binary')" data-mount-btn="native-binary" class="mount-filter-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium">Mount 1: Native</button>
-          <button type="button" onclick="setMountFilter('packaged-ui-archive')" data-mount-btn="packaged-ui-archive" class="mount-filter-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium">Mount 2: UI/Archive</button>
-          <button type="button" onclick="setMountFilter('hardware-firmware-protocol')" data-mount-btn="hardware-firmware-protocol" class="mount-filter-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium">Mount 3: Hardware</button>
-          <button type="button" onclick="setMountFilter('ai-model-data')" data-mount-btn="ai-model-data" class="mount-filter-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium">Mount 4: AI/Data</button>
-        </div>
+        <span class="bg-[var(--primary)] text-[var(--primary-foreground)] rounded-md px-3 py-1 text-xs font-semibold">Generative UI Concept Mock</span>
       </div>
-
-      <div>
-        <input
-          id="recon-global-search"
-          type="text"
-          oninput="applyReconFilters()"
-          placeholder="Search subsystems, C++ classes, virtual methods, recon-kit/ file paths, or descriptions..."
-          class="w-full bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm focus:outline-none"
-        />
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        ${uiMockCardsHtml}
       </div>
-    </div>
+    </section>
 
-    <!-- Tab 1: Subsystems & Architecture -->
-    <section id="tab-panel-subsystems" class="recon-tab-panel space-y-4">
+    <!-- Architectural Subsystem & Module Overview Cards -->
+    <section class="space-y-4">
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <h2 class="text-[var(--foreground)] font-semibold text-lg">Architectural Subsystems &amp; Recovered Modules (${report.subsystems.length})</h2>
+        <p class="text-[var(--muted-foreground)] text-sm mt-0.5">Clustered subsystem hierarchy extracted into <code class="font-mono text-xs">recon-kit/</code>. Use Antigravity's native <code class="font-mono text-xs">ask_question</code> prompt to select which subsystem and engineering harness to execute next.</p>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         ${subsystemCardsHtml}
       </div>
     </section>
 
-    <!-- Tab 2: Selectable Engineering Harnesses -->
-    <section id="tab-panel-harnesses" class="recon-tab-panel hidden space-y-4">
-      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
-        <h2 class="text-[var(--foreground)] font-semibold text-base">Phase 2 &rarr; Phase 3 Recon-to-Argon Handoff Selection</h2>
-        <p class="text-[var(--muted-foreground)] text-sm mt-1">Select one of the 4 Engineering Harnesses below and click <strong>Copy Argon Handoff Prompt</strong> to launch clean-room reconstruction or auditing directly from the materialized <code class="font-mono text-xs">recon-kit/</code> workspace without re-running decompilers.</p>
+    ${hardwareSectionHtml}
+
+    <!-- Available Engineering Harnesses Overview -->
+    <section class="space-y-4">
+      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+        <h2 class="text-[var(--foreground)] font-semibold text-lg">Available Recon-to-Argon Engineering Harnesses (${report.harnesses.length})</h2>
+        <p class="text-[var(--muted-foreground)] text-sm mt-0.5">Reference summary of the 4 engineering tracks selectable via Antigravity's native <code class="font-mono text-xs">ask_question</code> workflow.</p>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         ${harnessCardsHtml}
       </div>
     </section>
-
-    <!-- Tab 3: Materialized recon-kit/ Files -->
-    <section id="tab-panel-materialized_files" class="recon-tab-panel hidden">
-      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm overflow-x-auto">
-        <h2 class="text-[var(--foreground)] font-semibold text-base mb-3">Materialized recon-kit/ Filesystem Artifacts</h2>
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs uppercase tracking-wider">
-              <th class="py-3 px-4">Relative / Absolute Path</th>
-              <th class="py-3 px-4">Mount</th>
-              <th class="py-3 px-4">Category</th>
-              <th class="py-3 px-4">Size</th>
-              <th class="py-3 px-4">Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${materializedRowsHtml}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Tab 4: Domain Previews (UI Assets & Hardware/Protocol Maps) -->
-    <section id="tab-panel-domain_previews" class="recon-tab-panel hidden space-y-6">
-      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm overflow-x-auto">
-        <h2 class="text-[var(--foreground)] font-semibold text-base mb-1">Mount 2 — Packaged UI, Scene &amp; Resource Preview (${report.ui_preview_items.length})</h2>
-        <p class="text-[var(--muted-foreground)] text-xs mb-3">Extracted HTML views, stylesheets, scripts, scenes, prefabs, and PE dialog/icon descriptors.</p>
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs uppercase tracking-wider">
-              <th class="py-3 px-4">Logical Path</th>
-              <th class="py-3 px-4">Asset Kind</th>
-              <th class="py-3 px-4">Size</th>
-              <th class="py-3 px-4">Summary</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${uiPreviewRowsHtml}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm overflow-x-auto">
-        <h2 class="text-[var(--foreground)] font-semibold text-base mb-1">Mount 3 — Hardware Peripheral Registers &amp; Protocol Frames (${report.hardware_or_protocol_items.length})</h2>
-        <p class="text-[var(--muted-foreground)] text-xs mb-3">Memory-mapped I/O (MMIO) register definitions, SVD/DeviceTree nodes, and protocol frame layouts.</p>
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs uppercase tracking-wider">
-              <th class="py-3 px-4">Register / Field</th>
-              <th class="py-3 px-4">Address / Offset</th>
-              <th class="py-3 px-4">Width</th>
-              <th class="py-3 px-4">Access</th>
-              <th class="py-3 px-4">Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${hardwareRowsHtml}
-          </tbody>
-        </table>
-      </div>
-    </section>
   </div>
-
-  <script>
-    let activeMountFilter = "all";
-
-    function switchReconTab(tabId) {
-      const panels = ["subsystems", "harnesses", "materialized_files", "domain_previews"];
-      panels.forEach((id) => {
-        const panel = document.getElementById("tab-panel-" + id);
-        const btn = document.getElementById("tab-btn-" + id);
-        if (panel) {
-          if (id === tabId) {
-            panel.classList.remove("hidden");
-          } else {
-            panel.classList.add("hidden");
-          }
-        }
-        if (btn) {
-          if (id === tabId) {
-            btn.className = "recon-tab-btn bg-[var(--primary)] text-[var(--primary-foreground)] rounded-lg px-4 py-2 text-sm font-semibold transition-colors";
-          } else {
-            btn.className = "recon-tab-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-lg px-4 py-2 text-sm font-medium transition-colors";
-          }
-        }
-      });
-    }
-
-    function setMountFilter(mount) {
-      activeMountFilter = mount;
-      const buttons = document.querySelectorAll(".mount-filter-btn");
-      buttons.forEach((btn) => {
-        const btnMount = btn.getAttribute("data-mount-btn");
-        if (btnMount === mount) {
-          btn.className = "mount-filter-btn bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full px-3 py-1 text-xs font-semibold";
-        } else {
-          btn.className = "mount-filter-btn bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-3 py-1 text-xs font-medium";
-        }
-      });
-      applyReconFilters();
-    }
-
-    function applyReconFilters() {
-      const input = document.getElementById("recon-global-search");
-      const query = (input ? input.value : "").toLowerCase().trim();
-
-      const subsystemCards = document.querySelectorAll(".subsystem-card");
-      subsystemCards.forEach((card) => {
-        const cardMount = card.getAttribute("data-mount") || "";
-        const cardSearch = card.getAttribute("data-search") || "";
-        const mountMatch = activeMountFilter === "all" || cardMount === activeMountFilter;
-        const textMatch = !query || cardSearch.includes(query);
-        card.style.display = mountMatch && textMatch ? "" : "none";
-      });
-
-      const fileRows = document.querySelectorAll(".materialized-file-row");
-      fileRows.forEach((row) => {
-        const rowMount = row.getAttribute("data-mount") || "";
-        const rowSearch = row.getAttribute("data-search") || "";
-        const mountMatch = activeMountFilter === "all" || rowMount === activeMountFilter;
-        const textMatch = !query || rowSearch.includes(query);
-        row.style.display = mountMatch && textMatch ? "" : "none";
-      });
-    }
-
-    function selectHarnessTrack(harnessId) {
-      switchReconTab("harnesses");
-      const targetCard = document.getElementById("harness-card-" + harnessId);
-      if (targetCard) {
-        targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }
-
-    function copyArgonPrompt(promptElementId, buttonElementId) {
-      const promptEl = document.getElementById(promptElementId);
-      const btnEl = document.getElementById(buttonElementId);
-      if (!promptEl || !btnEl) return;
-      const text = promptEl.textContent || "";
-
-      const showCopiedState = () => {
-        const originalText = btnEl.textContent;
-        btnEl.textContent = "Copied Argon Prompt!";
-        setTimeout(() => {
-          btnEl.textContent = originalText;
-        }, 2000);
-      };
-
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(showCopiedState).catch(() => {
-          fallbackCopy(text, showCopiedState);
-        });
-      } else {
-        fallbackCopy(text, showCopiedState);
-      }
-    }
-
-    function fallbackCopy(text, onDone) {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch (_err) {
-        // Ignore clipboard errors in restricted frames
-      }
-      document.body.removeChild(ta);
-      onDone();
-    }
-  </script>
 </body>
 </html>
 `;

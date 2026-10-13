@@ -71,18 +71,14 @@ When analyzing multi-subsystem binaries, multi-artifact bundles, or porting C/C+
 
 When reverse-engineering complex native binaries, packaged UI archives, firmware images, or AI model bundles for architectural exploration, clean-room reconstruction, or security auditing, execute the **4-Phase Recon-to-Argon Handoff Workflow**:
 
-- **Phase 1 — Universal 4-Mount Recon Kit Materialization (`export_recon_kit`):**
-  Call `export_recon_kit({ path: "/abs/path/to/target" })` to automatically detect all applicable domain mounts (`Mount 1: native-binary`, `Mount 2: packaged-ui-archive`, `Mount 3: hardware-firmware-protocol`, `Mount 4: ai-model-data`) and materialize `RECON_BLUEPRINT.md`, the Antigravity `generative_ui`-compliant `RECON_EXPLORER.html`, and the structured `recon-kit/` workspace directory (`types/`, `vtables/`, `decompiled/`, `ui-assets/`, `hardware-hal/`, `ai-model/`).
-- **Phase 2 — Interactive `RECON_EXPLORER.html` Side-Pane Review & Harness Selection:**
-  Present `RECON_EXPLORER.html` as a `UserFacing: true` Antigravity artifact in the Side Pane and use `ask_question` so the human operator selects which subsystem and which of the **4 Engineering Harnesses** to execute:
-  1. `verified-safe-rust-port` — Port a native C/C++ subsystem to `#![forbid(unsafe_code)]` Safe Rust.
-  2. `clean-room-app-ui-rebuild` — Reconstruct a modern web/desktop UI or game scene from extracted Mount 2 assets and state machines.
-  3. `hardware-hal-protocol-replay` — Synthesize a typed Rust/C HAL driver or protocol parser from Mount 3 register/frame maps.
-  4. `security-hazard-audit` — Remediate and verify latent memory, arithmetic, and deserialization hazards across all mounts.
-- **Phase 3 — Antigravity + Gemini 4 Argon Execution from `recon-kit/`:**
-  Hand off to **Antigravity + Gemini 4 Argon** (or copy the ready-to-use `argon_handoff_prompt` from `RECON_EXPLORER.html`) to build/recreate the selected library, application, UI, or hardware driver directly from `RECON_BLUEPRINT.md` and `recon-kit/` without re-running decompilers.
-- **Phase 4 — Mathematical Referee Verification (`verify_rust_parity` / `verify_reconstruction`):**
-  Run `verify_rust_parity` (with a clean pure-Rust `scaffold_output_dir` and optional `--html-report <path>`) or `verify_reconstruction` as the mathematical referee to prove bit-exact behavioral equivalence.
+- **Phase 1 — Materialize the 4-Mount Recon Kit (`export_recon_kit`):**
+  Call `export_recon_kit({ path: "/abs/path/to/target" })` to automatically detect all applicable domain mounts (`Mount 1: native-binary`, `Mount 2: packaged-ui-archive`, `Mount 3: hardware-firmware-protocol`, `Mount 4: ai-model-data`) and materialize `RECON_BLUEPRINT.md` and the structured 4-Mount `recon-kit/` workspace directory (`0` unsolicited `.html` files by default; `mock_ui_concepts: false`).
+- **Phase 2 — Native `ask_question` Harness Selection (& Opt-In UI Concept Mock):**
+  Always use Antigravity's native `ask_question` tool (never clickable HTML buttons) so the user selects which subsystem and which of the **4 Harnesses** (`verified-safe-rust-port`, `clean-room-app-ui-rebuild`, `hardware-hal-protocol-replay`, `security-hazard-audit`) to execute. If Mount 2 UI assets were discovered, include an option in `ask_question` asking if the user wants to generate a visual `generative_ui` UI concept mock (`mock_ui_concepts: true`).
+- **Phase 3 — Antigravity + Gemini 4 Argon Reconstruction:**
+  Hand off to **Antigravity + Gemini 4 Argon** to build/recreate the selected library, application, UI, or hardware driver directly from `RECON_BLUEPRINT.md` and `recon-kit/` without re-running decompilers.
+- **Phase 4 — Mathematical Referee Verification:**
+  Run `verify_rust_parity` (clean Cargo crate by default via `scaffold_output_dir`) or `verify_reconstruction` as the mathematical referee.
 
 ---
 

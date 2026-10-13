@@ -72,11 +72,17 @@ export const registerReconKitCommands = (
         .describe(
           "Maximum number of archive entries, functions, tensors, or hardware registers to sample per mount",
         ),
+      mockUiConcepts: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Opt-in flag (default false): render an Antigravity generative_ui UI concept mock when UI assets are present",
+        ),
       explorerHtml: z
         .boolean()
-        .default(true)
+        .default(false)
         .describe(
-          "Generate RECON_EXPLORER.html interactive workbench (use --no-explorer-html to disable)",
+          "Opt-in alias for --mock-ui-concepts (default false): do not generate HTML unless explicitly requested",
         ),
     }),
     run: ({ args, options }) =>
@@ -101,7 +107,9 @@ export const registerReconKitCommands = (
               max_subsystems: options.maxSubsystems,
               max_classes: options.maxClasses,
               max_entries: options.maxEntries,
-              include_explorer_html: options.explorerHtml,
+              mock_ui_concepts: options.mockUiConcepts || options.explorerHtml,
+              include_explorer_html:
+                options.mockUiConcepts || options.explorerHtml,
             },
             { signal },
           );

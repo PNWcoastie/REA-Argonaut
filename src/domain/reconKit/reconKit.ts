@@ -100,11 +100,17 @@ export const exportReconKitInputSchema = z
       .describe(
         "Maximum number of archive entries, functions, tensors, or hardware registers to sample per mount (default 500).",
       ),
+    mock_ui_concepts: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Opt-in flag (default false): when true and the target contains UI/UX assets, renders an Antigravity generative_ui visual concept mock of the extracted screens/components without any clickable harness buttons.",
+      ),
     include_explorer_html: z
       .boolean()
-      .default(true)
+      .default(false)
       .describe(
-        "Whether to generate the Antigravity generative_ui compliant RECON_EXPLORER.html interactive workbench alongside RECON_BLUEPRINT.md (default true).",
+        "Opt-in alias for mock_ui_concepts (default false): no HTML files are generated unless explicitly requested by the user.",
       ),
   })
   .strict();
