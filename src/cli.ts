@@ -5,6 +5,8 @@ import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
 import { registerGoCommands } from "./cli/goCommands.js";
+import { registerRustCppCommands } from "./cli/rustCppCommands.js";
+import { registerPythonFrozenCommands } from "./cli/pythonFrozenCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
@@ -101,6 +103,8 @@ export const createCli = (
   registerSignalCommands(cli, logger, environment);
   registerEvmCommands(cli, logger, environment);
   registerGoCommands(cli, logger);
+  registerRustCppCommands(cli, logger);
+  registerPythonFrozenCommands(cli, logger);
   registerSqliteCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
   registerManagedCommands(cli, logger, analysis.runProviderAnalysis);

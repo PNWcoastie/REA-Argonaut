@@ -41,6 +41,7 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   get_call_graph: { address: "0x1000" },
   find_xrefs_to_name: { name: "malloc" },
   analyze_function: { procedure: "main" },
+  decompile_subgraph: { procedure: "main" },
   annotate_native_function: {
     procedure: "0x10100",
     name: "entry",

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
+import { decompileSubgraphInputSchema } from "../domain/native/nativeSubgraph.js";
 
 import { officialOutputSchemas } from "./toolOutputSchemaGroups.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
@@ -41,6 +42,11 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     "annotate_native_function",
     "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra changes its ephemeral session analysis database only; original executable bytes remain unchanged. Empty comment text clears that comment. Edits remain available to subsequent MCP calls until close; CLI returns the updated dossier before discarding its session. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
+  ),
+  official(
+    "decompile_subgraph",
+    "Traverse the bounded call-graph subgraph from a root procedure (BFS or DFS) and return decompiled pseudocode, assembly instructions, callers, callees, referenced string constants, and inferred base+displacement struct offsets for every visited procedure in a single batch call. Eliminates N+1 round-trip decompilation overhead; preserves cycle edges explicitly without executing the target.",
+    decompileSubgraphInputSchema,
   ),
   official(
     "inspect_native_load_image",

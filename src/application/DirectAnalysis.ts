@@ -57,6 +57,7 @@ import {
 
 type DirectAnalysisTool =
   | "annotate_native_function"
+  | "decompile_subgraph"
   | "inspect_native_load_image"
   | "read_bytes"
   | "address_to_file_offset"

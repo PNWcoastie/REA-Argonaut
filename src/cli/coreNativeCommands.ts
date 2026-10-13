@@ -17,6 +17,57 @@ export const registerCoreNativeCommands = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   registerAnnotationCommand(cli, logger, runDirectAnalysis);
+  cli.command(CLI_COMMANDS.decompileSubgraph, {
+    description:
+      "Traverse and decompile a bounded call-graph subgraph from a root procedure in one call",
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      procedure: z
+        .string()
+        .describe("Root procedure symbol name or 0x-prefixed entry address"),
+    }),
+    options: z.object({
+      maxDepth: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .default(2)
+        .describe("Maximum call-graph traversal depth (0..10)"),
+      maxNodes: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(25)
+        .describe("Maximum number of unique procedures to decompile (1..100)"),
+      traversal: z
+        .enum(["bfs", "dfs"])
+        .default("bfs")
+        .describe("Call-graph traversal order ('bfs' or 'dfs')"),
+      includeAssembly: z
+        .boolean()
+        .default(true)
+        .describe("Include disassembled instruction lines for each procedure"),
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.decompileSubgraph, () =>
+        runDirectAnalysis(
+          args.path,
+          "decompile_subgraph",
+          {
+            document: null,
+            procedure: args.procedure,
+            max_depth: options.maxDepth,
+            max_nodes: options.maxNodes,
+            traversal: options.traversal,
+            include_assembly: options.includeAssembly,
+          },
+          directAnalysisOptionsFromCli(logger, options),
+        ),
+      ),
+  });
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:
       "Verify loaded native bytes, source mappings, relocations and entry",

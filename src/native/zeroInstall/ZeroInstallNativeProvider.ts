@@ -73,6 +73,7 @@ const ZERO_INSTALL_OPERATIONS = [
   "inspect_native_instruction",
   "resolve_native_call_targets",
   "analyze_function",
+  "decompile_subgraph",
   "procedure_assembly",
   "procedure_callees",
   "procedure_callers",
@@ -1000,6 +1001,9 @@ class ZeroInstallSession {
         return ok(this.#buildFunctionDossier(proc.value, model));
       }
 
+      case "decompile_subgraph":
+        return this.#decompileSubgraph(operation, parameters, model);
+
       case "annotate_native_function": {
         const proc = this.#resolveProcedureSelector(
           operation,
@@ -1753,6 +1757,422 @@ class ZeroInstallSession {
       native_value_flow: null,
       limitations: [...BASE_LIMITATIONS],
     };
+  }
+
+  #decompileSubgraph(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    model: BinaryAnalysisModel,
+  ): Result<JsonValue, AnalysisError> {
+    const docName = basename(this.#target.path);
+    if (
+      typeof parameters.document === "string" &&
+      parameters.document.length > 0 &&
+      parameters.document !== docName &&
+      parameters.document !== this.#target.path
+    ) {
+      return err(
+        new AnalysisInputError(operation, {
+          userMessage: `Document ${parameters.document} was not found.`,
+        }),
+      );
+    }
+    const rootRes = this.#resolveProcedureSelector(
+      operation,
+      parameters.procedure,
+      model,
+    );
+    if (!rootRes.ok) return rootRes;
+    const rootProc = rootRes.value;
+
+    const maxDepth =
+      typeof parameters.max_depth === "number" &&
+      Number.isInteger(parameters.max_depth)
+        ? parameters.max_depth
+        : 2;
+    if (maxDepth < 0 || maxDepth > 10) {
+      return err(
+        new AnalysisInputError(operation, {}, [
+          {
+            path: ["max_depth"],
+            reason: "out_of_range",
+            message: "max_depth must be an integer between 0 and 10.",
+          },
+        ]),
+      );
+    }
+
+    const maxNodes =
+      typeof parameters.max_nodes === "number" &&
+      Number.isInteger(parameters.max_nodes)
+        ? parameters.max_nodes
+        : 25;
+    if (maxNodes < 1 || maxNodes > 100) {
+      return err(
+        new AnalysisInputError(operation, {}, [
+          {
+            path: ["max_nodes"],
+            reason: "out_of_range",
+            message: "max_nodes must be an integer between 1 and 100.",
+          },
+        ]),
+      );
+    }
+
+    const traversal =
+      parameters.traversal === "dfs"
+        ? "dfs"
+        : parameters.traversal === undefined || parameters.traversal === "bfs"
+          ? "bfs"
+          : null;
+    if (traversal === null) {
+      return err(
+        new AnalysisInputError(operation, {}, [
+          {
+            path: ["traversal"],
+            reason: "invalid_value",
+            message: "traversal must be 'bfs' or 'dfs'.",
+          },
+        ]),
+      );
+    }
+
+    const includeAssembly =
+      typeof parameters.include_assembly === "boolean"
+        ? parameters.include_assembly
+        : true;
+
+    const queue: Array<{ readonly proc: ParsedProcedure; readonly depth: number }> = [
+      { proc: rootProc, depth: 0 },
+    ];
+    const visited = new Set<bigint>();
+    const scheduled = new Set<bigint>([rootProc.address]);
+
+    const nodes: Array<Readonly<Record<string, JsonValue>>> = [];
+    const edges: Array<Readonly<Record<string, JsonValue>>> = [];
+    const cycleEdges: Array<Readonly<Record<string, JsonValue>>> = [];
+    const stringMap = new Map(model.strings.map((s) => [s.address, s]));
+    const aggregatedStringValues = new Map<string, string>();
+    const aggregatedStringRefs = new Map<string, Set<string>>();
+    let truncated = false;
+
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      const proc = curr.proc;
+      if (visited.has(proc.address)) {
+        continue;
+      }
+      if (nodes.length >= maxNodes) {
+        truncated = true;
+        break;
+      }
+      visited.add(proc.address);
+
+      const procHex = toHex(proc.address);
+      const callers = [...proc.callers]
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+        .map((addr) => model.proceduresByAddr.get(addr))
+        .filter((p): p is ParsedProcedure => p !== undefined)
+        .map((p) => ({
+          address: toHex(p.address),
+          name: p.name,
+        }));
+
+      const sortedCalleeAddrs = [...proc.callees].sort((a, b) =>
+        a < b ? -1 : a > b ? 1 : 0,
+      );
+      const callees = sortedCalleeAddrs
+        .map((addr) => model.proceduresByAddr.get(addr))
+        .filter((p): p is ParsedProcedure => p !== undefined)
+        .map((p) => ({
+          address: toHex(p.address),
+          name: p.name,
+        }));
+
+      const seenNodeStrings = new Set<string>();
+      const nodeStrings: Array<{ readonly address: string; readonly value: string }> = [];
+      for (const ins of proc.instructions) {
+        if (ins.targetAddress === null) continue;
+        const s = stringMap.get(ins.targetAddress);
+        if (s !== undefined) {
+          const sHex = toHex(s.address);
+          if (!seenNodeStrings.has(sHex)) {
+            seenNodeStrings.add(sHex);
+            nodeStrings.push({ address: sHex, value: s.value });
+          }
+          aggregatedStringValues.set(sHex, s.value);
+          const refSet = aggregatedStringRefs.get(sHex) ?? new Set<string>();
+          refSet.add(procHex);
+          aggregatedStringRefs.set(sHex, refSet);
+        }
+      }
+
+      const inferredOffsets = this.#extractInferredStructOffsets(proc);
+
+      nodes.push({
+        procedure: {
+          address: procHex,
+          name: proc.name,
+          signature: this.#formatSignature(proc),
+        },
+        depth: curr.depth,
+        pseudocode: this.#synthesizePseudoCode(proc, model),
+        assembly: includeAssembly ? this.#formatAssemblyLines(proc) : [],
+        callers,
+        callees,
+        referenced_strings: nodeStrings,
+        inferred_struct_offsets: inferredOffsets,
+      });
+
+      const nextItems: Array<{ readonly proc: ParsedProcedure; readonly depth: number }> = [];
+      for (const calleeAddr of sortedCalleeAddrs) {
+        const callee = model.proceduresByAddr.get(calleeAddr);
+        if (callee === undefined) continue;
+        const calleeHex = toHex(callee.address);
+        if (visited.has(calleeAddr)) {
+          cycleEdges.push({
+            from: procHex,
+            from_name: proc.name,
+            to: calleeHex,
+            to_name: callee.name,
+          });
+          edges.push({
+            from: procHex,
+            from_name: proc.name,
+            to: calleeHex,
+            to_name: callee.name,
+            kind: "cycle_call",
+          });
+        } else {
+          edges.push({
+            from: procHex,
+            from_name: proc.name,
+            to: calleeHex,
+            to_name: callee.name,
+            kind: "direct_call",
+          });
+          if (curr.depth + 1 > maxDepth) {
+            truncated = true;
+          } else if (!scheduled.has(calleeAddr) || traversal === "dfs") {
+            scheduled.add(calleeAddr);
+            nextItems.push({ proc: callee, depth: curr.depth + 1 });
+          }
+        }
+      }
+
+      if (traversal === "dfs") {
+        queue.unshift(...nextItems);
+      } else {
+        queue.push(...nextItems);
+      }
+    }
+
+    const aggregatedStrings = [...aggregatedStringValues.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([address, value]) => ({
+        address,
+        value,
+        referenced_by: [...(aggregatedStringRefs.get(address) ?? [])].sort(),
+      }));
+
+    return ok({
+      root_procedure: {
+        address: toHex(rootProc.address),
+        name: rootProc.name,
+        signature: this.#formatSignature(rootProc),
+      },
+      traversal,
+      max_depth: maxDepth,
+      max_nodes: maxNodes,
+      node_count: nodes.length,
+      truncated,
+      cycle_edges: cycleEdges,
+      nodes,
+      edges,
+      aggregated_strings: aggregatedStrings,
+      limitations: [...BASE_LIMITATIONS],
+    });
+  }
+
+  #extractInferredStructOffsets(
+    proc: ParsedProcedure,
+  ): Array<Readonly<Record<string, JsonValue>>> {
+    const excludedBases = new Set([
+      "rsp",
+      "rbp",
+      "esp",
+      "ebp",
+      "sp",
+      "fp",
+      "rip",
+      "eip",
+      "pc",
+      "x29",
+      "x30",
+      "lr",
+    ]);
+    const tracked = new Map<
+      string,
+      {
+        readonly base: string;
+        readonly offset: number;
+        size: number;
+        hasRead: boolean;
+        hasWrite: boolean;
+        hasAddress: boolean;
+      }
+    >();
+
+    const recordAccess = (
+      rawBase: string,
+      offset: number,
+      size: number,
+      mode: "read" | "write" | "address",
+    ) => {
+      const base = rawBase.replace(/^%/u, "").toLowerCase();
+      if (excludedBases.has(base)) return;
+      if (offset < 0) return;
+      const key = `${base}:${offset}`;
+      const existing = tracked.get(key);
+      if (existing === undefined) {
+        tracked.set(key, {
+          base,
+          offset,
+          size: Math.max(0, size),
+          hasRead: mode === "read",
+          hasWrite: mode === "write",
+          hasAddress: mode === "address",
+        });
+      } else {
+        if (mode === "read") existing.hasRead = true;
+        if (mode === "write") existing.hasWrite = true;
+        if (mode === "address") existing.hasAddress = true;
+        if (size > existing.size) existing.size = size;
+      }
+    };
+
+    const inferSize = (mnem: string, rawText: string, ops: readonly string[]): number => {
+      const m = mnem.toLowerCase();
+      const lower = rawText.toLowerCase();
+      if (m === "lea" || m === "leal" || m === "leaq") return 0;
+      if (lower.includes("byte ptr") || m.endsWith("b") || m === "ldrb" || m === "strb") {
+        return 1;
+      }
+      if (lower.includes("word ptr") && !lower.includes("dword ptr") && !lower.includes("qword ptr")) {
+        return 2;
+      }
+      if (m === "ldrh" || m === "strh" || m === "movw") return 2;
+      if (lower.includes("dword ptr") || m === "movl" || m === "addl" || m === "cmpl") {
+        return 4;
+      }
+      if (lower.includes("qword ptr") || m === "movq" || m === "addq" || m === "cmpq") {
+        return 8;
+      }
+      for (const op of ops) {
+        const clean = op.replace(/^%/u, "").trim().toLowerCase();
+        if (/^(?:[abcd]l|[sd]il|r(?:8|9|1[0-5])b)$/u.test(clean)) return 1;
+        if (/^(?:[abcd]x|[sd]i|r(?:8|9|1[0-5])w)$/u.test(clean)) return 2;
+        if (/^(?:e[abcd]x|e[sd]i|r(?:8|9|1[0-5])d|w\d+)$/u.test(clean)) return 4;
+        if (/^(?:r[abcd]x|r[sd]i|r(?:8|9|1[0-5])|x\d+)$/u.test(clean)) return 8;
+      }
+      return 8;
+    };
+
+    for (const ins of proc.instructions) {
+      const m = ins.mnemonic.toLowerCase();
+      const isAddressOnly = m.startsWith("lea");
+      const isArmStore = m.startsWith("str") || m.startsWith("stur");
+      const size = inferSize(m, ins.rawText, ins.operands);
+
+      for (let idx = 0; idx < ins.operands.length; idx++) {
+        const op = ins.operands[idx]!;
+        // 1. AT&T syntax: disp(%reg) or (%reg)
+        const attMatch = op.match(
+          /^(-?(?:0x[0-9a-fA-F]+|\d+))?\(%([a-zA-Z0-9]+)\)$/u,
+        );
+        if (attMatch !== null) {
+          const dispStr = attMatch[1];
+          const reg = attMatch[2]!;
+          const offset =
+            dispStr === undefined || dispStr.length === 0
+              ? 0
+              : dispStr.startsWith("-0x") || dispStr.startsWith("-0X")
+                ? -Number.parseInt(dispStr.slice(3), 16)
+                : dispStr.startsWith("0x") || dispStr.startsWith("0X")
+                  ? Number.parseInt(dispStr.slice(2), 16)
+                  : Number.parseInt(dispStr, 10);
+          const mode: "read" | "write" | "address" = isAddressOnly
+            ? "address"
+            : idx === ins.operands.length - 1 &&
+                !m.startsWith("cmp") &&
+                !m.startsWith("test")
+              ? "write"
+              : "read";
+          recordAccess(reg, offset, size, mode);
+          continue;
+        }
+
+        // 2. Intel / ARM bracket syntax: [reg], [reg + 0x10], [x0, #16]
+        const bracketMatch = op.match(
+          /\[([a-zA-Z0-9]+)(?:\s*(?:([+-])\s*(0x[0-9a-fA-F]+|\d+)|,\s*#?(-?(?:0x[0-9a-fA-F]+|\d+))))?\]/u,
+        );
+        if (bracketMatch !== null) {
+          const reg = bracketMatch[1]!;
+          let offset = 0;
+          if (bracketMatch[3] !== undefined) {
+            const sign = bracketMatch[2] === "-" ? -1 : 1;
+            const rawNum = bracketMatch[3];
+            const mag =
+              rawNum.startsWith("0x") || rawNum.startsWith("0X")
+                ? Number.parseInt(rawNum.slice(2), 16)
+                : Number.parseInt(rawNum, 10);
+            offset = sign * mag;
+          } else if (bracketMatch[4] !== undefined) {
+            const rawImm = bracketMatch[4];
+            offset =
+              rawImm.startsWith("-0x") || rawImm.startsWith("-0X")
+                ? -Number.parseInt(rawImm.slice(3), 16)
+                : rawImm.startsWith("0x") || rawImm.startsWith("0X")
+                  ? Number.parseInt(rawImm.slice(2), 16)
+                  : Number.parseInt(rawImm, 10);
+          }
+          const mode: "read" | "write" | "address" = isAddressOnly
+            ? "address"
+            : isArmStore ||
+                (idx === 0 &&
+                  !m.startsWith("cmp") &&
+                  !m.startsWith("test") &&
+                  !m.startsWith("ldr") &&
+                  !m.startsWith("ldur"))
+              ? "write"
+              : "read";
+          recordAccess(reg, offset, size, mode);
+        }
+      }
+    }
+
+    return [...tracked.values()]
+      .sort((a, b) =>
+        a.base !== b.base ? a.base.localeCompare(b.base) : a.offset - b.offset,
+      )
+      .map((entry) => ({
+        base: entry.base,
+        offset: entry.offset,
+        offset_hex:
+          entry.offset < 0
+            ? `-0x${Math.abs(entry.offset).toString(16)}`
+            : `+0x${entry.offset.toString(16)}`,
+        size: entry.size,
+        access:
+          entry.hasRead && entry.hasWrite
+            ? "read_write"
+            : entry.hasRead
+              ? "read"
+              : entry.hasWrite
+                ? "write"
+                : "address",
+        field_name: `field_${Math.abs(entry.offset).toString(16)}`,
+      }));
   }
 
   #inspectNativeInstruction(
@@ -3028,6 +3448,21 @@ function decodeExecutableSectionsBuiltin(
         } else if (word === 0xd65f03c0) {
           mnem = "ret";
           ops = [];
+        } else if ((word & 0xbfc00000) === 0xb9400000 || (word & 0xbfc00000) === 0xb9000000) {
+          const is64 = (word & 0x40000000) !== 0;
+          const isLoad = (word & 0x00400000) !== 0;
+          const imm12 = (word >>> 10) & 0xfff;
+          const rn = (word >>> 5) & 0x1f;
+          const rt = word & 0x1f;
+          const scale = is64 ? 8 : 4;
+          const disp = imm12 * scale;
+          mnem = isLoad ? "ldr" : "str";
+          const rtName = `${is64 ? "x" : "w"}${rt}`;
+          const rnName = rn === 31 ? "sp" : `x${rn}`;
+          ops = [
+            rtName,
+            disp === 0 ? `[${rnName}]` : `[${rnName}, #0x${disp.toString(16)}]`,
+          ];
         }
         parsed.instructionsByAddr.set(
           vaddr,
@@ -3039,6 +3474,8 @@ function decodeExecutableSectionsBuiltin(
         let len = 1;
         let mnem = "byte";
         let ops: string[] = [`0x${b0.toString(16)}`];
+        const reg64 = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"];
+        const reg32 = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"];
         if (
           pos + 4 <= bytes.length &&
           b0 === 0xf3 &&
@@ -3058,7 +3495,8 @@ function decodeExecutableSectionsBuiltin(
             pos + 4 <= bytes.length &&
             bytes[pos + 1] === 0x48 &&
             bytes[pos + 2] === 0x89 &&
-            bytes[pos + 3] === 0xe5
+            bytes[pos + 3] === 0xe5 &&
+            parsed.instructionsByAddr.get(vaddr - 4n)?.mnemonic !== "endbr64"
           ) {
             parsed.functionStartHints.add(vaddr);
           }
@@ -3092,6 +3530,61 @@ function decodeExecutableSectionsBuiltin(
           len = 1;
           mnem = "nop";
           ops = [];
+        } else {
+          const hasRexW = b0 === 0x48 && pos + 2 < bytes.length;
+          const opByte = hasRexW ? bytes[pos + 1]! : b0;
+          const modrmPos = hasRexW ? pos + 2 : pos + 1;
+          if (
+            modrmPos < bytes.length &&
+            (opByte === 0x8b ||
+              opByte === 0x89 ||
+              opByte === 0x8d ||
+              opByte === 0x03 ||
+              opByte === 0x01 ||
+              opByte === 0x3b ||
+              opByte === 0x39)
+          ) {
+            const modrm = bytes[modrmPos]!;
+            const mod = (modrm >>> 6) & 3;
+            const reg = (modrm >>> 3) & 7;
+            const rm = modrm & 7;
+            if (mod !== 3 && rm !== 4 && !(mod === 0 && rm === 5)) {
+              const dispLen = mod === 1 ? 1 : mod === 2 ? 4 : 0;
+              const totalLen = (hasRexW ? 2 : 1) + 1 + dispLen;
+              if (pos + totalLen <= bytes.length) {
+                const disp =
+                  mod === 1
+                    ? bytes.readInt8(modrmPos + 1)
+                    : mod === 2
+                      ? bytes.readInt32LE(modrmPos + 1)
+                      : 0;
+                const baseReg = reg64[rm]!;
+                const regName = (hasRexW ? reg64 : reg32)[reg]!;
+                const sizePrefix =
+                  opByte === 0x8d ? "" : hasRexW ? "QWORD PTR " : "DWORD PTR ";
+                const dispStr =
+                  disp === 0
+                    ? ""
+                    : disp < 0
+                      ? `-0x${Math.abs(disp).toString(16)}`
+                      : `+0x${disp.toString(16)}`;
+                const memOp = `${sizePrefix}[${baseReg}${dispStr}]`;
+                len = totalLen;
+                mnem =
+                  opByte === 0x8d
+                    ? "lea"
+                    : opByte === 0x8b || opByte === 0x89
+                      ? "mov"
+                      : opByte === 0x03 || opByte === 0x01
+                        ? "add"
+                        : "cmp";
+                ops =
+                  opByte === 0x89 || opByte === 0x01 || opByte === 0x39
+                    ? [memOp, regName]
+                    : [regName, memOp];
+              }
+            }
+          }
         }
         const sliceHex = bytes
           .subarray(pos, Math.min(bytes.length, pos + len))
@@ -3171,11 +3664,14 @@ function buildProceduresAndReferences(
   );
   for (let i = 0; i < sortedInsns.length; i++) {
     const ins = sortedInsns[i]!;
+    const prevMnem = sortedInsns[i - 1]?.mnemonic;
     if (
       ins.mnemonic === "endbr64" ||
       (ins.mnemonic === "push" &&
-        ins.operands[0] === "rbp" &&
-        sortedInsns[i + 1]?.mnemonic === "mov")
+        (ins.operands[0] === "rbp" || ins.operands[0] === "%rbp") &&
+        prevMnem !== "endbr64" &&
+        prevMnem !== "endbr32" &&
+        sortedInsns[i + 1]?.mnemonic.startsWith("mov") === true)
     ) {
       parsed.functionStartHints.add(ins.address);
     }
@@ -3186,8 +3682,21 @@ function buildProceduresAndReferences(
     execRanges.length === 0 ||
     execRanges.some((s) => addr >= s.start && addr < s.end);
 
+  const knownSymbolSpans = [...parsed.symbolsByAddr.values()].filter(
+    (s) => s.isFunction && s.size > 0,
+  );
+  const isInsideKnownSymbolSpan = (addr: bigint): boolean =>
+    knownSymbolSpans.some(
+      (s) => addr > s.address && addr < s.address + BigInt(s.size),
+    );
+
   const validStarts = [...parsed.functionStartHints]
-    .filter((a) => a > 0n && (inExec(a) || parsed.symbolsByAddr.has(a)))
+    .filter(
+      (a) =>
+        a > 0n &&
+        (parsed.symbolsByAddr.has(a) ||
+          (inExec(a) && !isInsideKnownSymbolSpan(a))),
+    )
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   if (validStarts.length === 0) {
@@ -3216,11 +3725,16 @@ function buildProceduresAndReferences(
       });
     }
 
+    const symEndLimit =
+      sym !== undefined && sym.size > 0
+        ? start + BigInt(sym.size)
+        : undefined;
     const procInsns: DecodedInsn[] = [];
     const localDisps = new Set<number>();
     for (const ins of sortedInsns) {
       if (ins.address < start) continue;
       if (nextStart !== undefined && ins.address >= nextStart) break;
+      if (symEndLimit !== undefined && ins.address >= symEndLimit) break;
       procInsns.push(ins);
       for (const op of ins.operands) {
         const dispMatch = /\[(?:rbp|ebp|sp)\s*([+-]\s*0x[0-9a-fA-F]+)\]/u.exec(
@@ -3233,7 +3747,7 @@ function buildProceduresAndReferences(
           }
         }
       }
-      if (ins.isReturn && sym?.size === 0) {
+      if (ins.isReturn && (sym === undefined || sym.size === 0)) {
         break;
       }
     }
