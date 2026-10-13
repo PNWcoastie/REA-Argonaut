@@ -33,6 +33,7 @@ import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
 import {
   carriesTargetContentMarker,
   encodeToolResult,
+  MCP_TOOL_RESULT_CONTENT_MODE,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 
@@ -114,11 +115,18 @@ export class EvidenceMcpServer extends McpServer {
               compactAdvertisedInputSchema(projected, budget).schema,
           )
         : undefined;
+    const baseConfig =
+      config !== undefined && MCP_TOOL_RESULT_CONTENT_MODE === "text-only"
+        ? (() => {
+            const { outputSchema: _omitted, ...restConfig } = config;
+            return restConfig;
+          })()
+        : config;
     return super.registerTool(
       name,
       (inputSchema === undefined
-        ? config
-        : { ...config, inputSchema }) as never,
+        ? baseConfig
+        : { ...baseConfig, inputSchema }) as never,
       callback as never,
     );
   }
@@ -235,7 +243,8 @@ class ErrorEvidenceTransport implements Transport {
       if (
         isJSONRPCResultResponse(recovered) &&
         isCallToolResult(recovered.result) &&
-        recovered.result.isError === true
+        (recovered.result.isError === true ||
+          MCP_TOOL_RESULT_CONTENT_MODE === "text-only")
       ) {
         // Keep the complete typed JSON in content. Error projections are not
         // success outputSchema data; oversized recovery must consume their

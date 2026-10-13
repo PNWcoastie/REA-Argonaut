@@ -1,22 +1,8 @@
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { PlaywrightElectronActiveProvider } from "../browser/PlaywrightElectronActiveProvider.js";
 
-/** Construct a stub Electron scenario provider (stripped in REA-Argonaut). */
+/** Construct a fresh provider without opening a target or acquiring an engine. */
 export const createElectronScenarioProvider = (
-  _environment: Readonly<Record<string, string | undefined>>,
-): ElectronActiveObservationPort => ({
-  identity: () => ({
-    id: "playwright-electron-active",
-    name: "Playwright Electron Active Observation",
-    version: "unavailable",
-  }),
-  capture: async () =>
-    err(
-      new AnalysisCapabilityUnavailableError(
-        "electron-active-observation",
-        "capture_electron_scenario",
-        "not_configured",
-      ),
-    ),
-});
+  environment: Readonly<Record<string, string | undefined>>,
+): ElectronActiveObservationPort =>
+  new PlaywrightElectronActiveProvider(environment);

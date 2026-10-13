@@ -170,7 +170,9 @@ export class ToolResultDelivery {
     if (encoded.ok)
       return {
         content: [{ type: "text", text: encoded.text }],
-        structuredContent: value,
+        ...(MCP_TOOL_RESULT_CONTENT_MODE === "structured-and-text"
+          ? { structuredContent: value }
+          : {}),
         ...(contract.returnsTargetContent
           ? { _meta: TARGET_CONTENT_RESULT_META }
           : {}),

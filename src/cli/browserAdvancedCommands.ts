@@ -8,6 +8,7 @@ import {
   compareWebScreenshotEvidence,
   discoverWebMcpTools,
 } from "../application/BrowserObservationService.js";
+import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   AnalysisInputError,
@@ -133,7 +134,7 @@ const registerCaptureDiff = (
             projectInputIssues(parsed.error.issues, input),
           );
         const result = await compareWebCaptureEvidence(
-          browserContext().provider,
+          new CdpBrowserProvider(),
           parsed.data,
         );
         return result.ok ? result.value : browserCliError(result.error);
@@ -225,7 +226,7 @@ const registerScreenshotDiff = (
             ),
           );
         const result = await compareWebScreenshotEvidence(
-          browserContext().provider,
+          new CdpBrowserProvider(),
           parsed.data,
         );
         return result.ok ? result.value : browserCliError(result.error);

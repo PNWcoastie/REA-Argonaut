@@ -1,7 +1,11 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { artifactCapabilities } from "../artifacts/ArtifactProviderMetadata.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
+import {
+  ARTIFACT_GRAPH_PROVIDER,
+  MANAGED_STATIC_PROVIDER,
+} from "../application/InvestigationProviders.js";
+import { managedStaticCapabilities } from "../dotnet/ManagedStaticProviderMetadata.js";
 import {
   NATIVE_MACOS_PROVIDER_IDENTITY,
   nativeMacOSCapabilities,
@@ -11,7 +15,7 @@ type AuxiliaryProviderDeclaration = ConstructorParameters<
   typeof LazyAnalysisProvider
 >[0];
 
-/** Wire the auxiliary AnalysisProvider implementations lazily. */
+/** Wire the three existing auxiliary AnalysisProvider implementations lazily. */
 export const auxiliaryAnalysisProviderDeclarations = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
@@ -34,6 +38,15 @@ export const auxiliaryAnalysisProviderDeclarations = (
         const { NativeMacOSProvider } =
           await import("../native/NativeMacOSProvider.js");
         return new NativeMacOSProvider(environment, undefined, platform);
+      },
+    },
+    {
+      identity: MANAGED_STATIC_PROVIDER,
+      capabilities: managedStaticCapabilities(),
+      load: async () => {
+        const { ManagedStaticProvider } =
+          await import("../dotnet/ManagedStaticProvider.js");
+        return new ManagedStaticProvider();
       },
     },
   ];

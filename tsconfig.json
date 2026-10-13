@@ -25,5 +25,11 @@
     "vitest.config.ts",
     "docs/.vitepress/config.ts"
   ],
-  "exclude": ["dist", "node_modules"]
+  "exclude": [
+    "src/**/*.fixture.ts",
+    "src/**/*.test.ts",
+    "tests",
+    "dist",
+    "node_modules"
+  ]
 }

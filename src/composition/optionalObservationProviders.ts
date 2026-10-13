@@ -4,17 +4,14 @@ import type {
   OptionalProviderLoadFailure,
   OptionalProviderLoadResult,
 } from "../application/OptionalObservationProviders.js";
+import {
+  CDP_BROWSER_PROVIDER_IDENTITY,
+  PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
+  CDP_ELECTRON_PROVIDER_IDENTITY,
+  PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
+} from "../browser/providerIdentities.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js";
 import { err, ok, type Result } from "../domain/result.js";
-
-const CDP_BROWSER_PROVIDER_IDENTITY = { id: "cdp-browser" } as const;
-const PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY = {
-  id: "playwright-browser-scenario",
-} as const;
-const CDP_ELECTRON_PROVIDER_IDENTITY = { id: "cdp-electron" } as const;
-const PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY = {
-  id: "playwright-electron-active",
-} as const;
-const V8_INSPECTOR_PROVIDER_IDENTITY = { id: "v8-inspector" } as const;
 
 /** Precisely typed startup factories for the five existing observation ports. */
 export type OptionalObservationFactories = {

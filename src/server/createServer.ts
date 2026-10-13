@@ -1,17 +1,31 @@
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
+import { createPacketCaptureService } from "../composition/captures.js";
+import { registerCaptureTools } from "./registerCaptureTools.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
+import { createSignalRecordingService } from "../composition/signals.js";
+import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import { wasmArtifactModule } from "../composition/wasm.js";
+import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
+import { evmInterfaceModule } from "../composition/evm.js";
+import { registerEvmTools } from "./registerEvmTools.js";
 import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabaseService.js";
+import { createSqliteDatabaseService } from "../composition/sqlite.js";
+import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
+import { createGoBinaryService } from "../composition/go.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
+import { registerGoTools } from "./registerGoTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
+import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
+import { registerFridaTools } from "./registerFridaTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -40,20 +54,55 @@ import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { registerApplicationTools } from "./registerApplicationTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
+import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
+import { registerBrowserTools } from "./registerBrowserTools.js";
+import { registerWebScriptTool } from "./registerWebScriptTool.js";
+import { registerWebModuleTool } from "./registerWebModuleTool.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
+import { createWebModuleTraceService } from "../composition/webModules.js";
+import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
+import { registerWebSourceLocationTool } from "./registerWebSourceLocationTool.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
+import { createWebRuntimeService } from "../composition/webRuntime.js";
+import { registerWebRuntimeTools } from "./registerWebRuntimeTools.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
+import { registerWebNetworkCaptureTool } from "./registerWebNetworkCaptureTool.js";
+import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
+import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
+import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
+import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
+import { registerManagedTools } from "./registerManagedTools.js";
+import { registerFirmwareTools } from "./registerFirmwareTools.js";
+import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
+import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
+import { registerAndroidTools } from "./registerAndroidTools.js";
+import { registerApktoolTools } from "./registerApktoolTools.js";
+import { registerFlutterTools } from "./registerFlutterTools.js";
+import { registerJebTools } from "./registerJebTools.js";
+import { registerAdbTools } from "./registerAdbTools.js";
+import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
+import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
+import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import { createAndroidAnalysisProvider } from "../composition/android.js";
+import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
+import { createFlutterBuildAnalysisProvider } from "../composition/flutter.js";
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import { createJebAnalysisProvider } from "../composition/jeb.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
+import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
+import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
@@ -68,7 +117,7 @@ import {
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 const TARGET_FREE_INSTRUCTIONS =
-  "REA-Argonaut provides Zero-G reverse-engineering and verified Rust reconstruction tools for local artifacts, native binaries, and JavaScript/Electron applications. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations.";
+  "REA-Argonaut provides Zero-G reverse-engineering and verified Rust reconstruction tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
   "REA-Argonaut analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
@@ -114,6 +163,7 @@ const installSessionToolAvailability = (
   session: BinarySessionPort | undefined,
   options: CreateServerOptions,
   environment: Readonly<NodeJS.ProcessEnv>,
+  fridaInstrumentation: FridaInstrumentationPort,
 ) => {
   if (session === undefined) return undefined;
   const linux = process.platform === "linux";
@@ -123,25 +173,54 @@ const installSessionToolAvailability = (
   const basePolicy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
-      packetCaptureEnabled: false,
-      signalRecordingEnabled: false,
-      wasmArtifactEnabled: false,
-      evmInterfaceEnabled: false,
-      webModuleResolutionEnabled: false,
+      packetCaptureEnabled:
+        options.packetCapture !== undefined ||
+        (linux && isAbsolute(environment.REA_TSHARK_COMMAND ?? "")),
+      signalRecordingEnabled:
+        options.signalRecording !== undefined ||
+        (linux && isAbsolute(environment.REA_SIGROK_COMMAND ?? "")),
+      wasmArtifactEnabled: true,
+      evmInterfaceEnabled: options.evmInterface !== undefined || linuxX64,
+      webModuleResolutionEnabled:
+        options.webModuleTrace !== undefined ||
+        isAbsolute(environment.REA_BROWSER_EXECUTABLE ?? ""),
       recordedCrashEnabled: options.recordedCrash !== undefined || pwntools,
       binaryLayoutEnabled: options.binaryLayout !== undefined || pwntools,
-      firmwareInspectionEnabled: false,
-      firmwareExtractionEnabled: false,
-      browserObservationEnabled: false,
-      javascriptRecoveryEnabled: false,
-      browserScenarioEnabled: false,
-      electronObservationEnabled: false,
-      electronAutomationEnabled: false,
-      v8InspectorObservationEnabled: false,
+      firmwareInspectionEnabled:
+        options.firmwareAnalysis !== undefined ||
+        (linux && isAbsolute(environment.REA_BINWALK_COMMAND ?? "")),
+      firmwareExtractionEnabled:
+        options.firmwareAnalysis !== undefined ||
+        (linux && isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
+      browserObservationEnabled: options.browserObservation !== undefined,
+      javascriptRecoveryEnabled:
+        options.javascriptRecovery !== undefined ||
+        (linuxX64 && isAbsolute(environment.REA_WAKARU_COMMAND ?? "")),
+      browserScenarioEnabled: options.browserScenarioCapture !== undefined,
+      electronObservationEnabled: options.electronObservation !== undefined,
+      electronAutomationEnabled:
+        options.electronActiveObservation !== undefined,
+      v8InspectorObservationEnabled:
+        options.javascriptRuntimeObservation !== undefined,
     },
   });
+  const policy = (): AvailabilityPolicy => {
+    const value = basePolicy();
+    const fridaFailure =
+      options.optionalProviderLoadFailures?.fridaInstrumentation ??
+      fridaInstrumentation.availabilityFailure?.();
+    return fridaFailure === undefined
+      ? value
+      : {
+          ...value,
+          optionalProviderLoadFailures: {
+            ...value.optionalProviderLoadFailures,
+            fridaInstrumentation: fridaFailure,
+          },
+        };
+  };
   return {
-    policy: basePolicy,
+    policy,
   };
 };
 
@@ -183,17 +262,35 @@ export const createServer = (
   const analysis = source.kind === "session" ? source.session : source.analysis;
   const environment = snapshotEnvironment(options.environment ?? process.env);
   const delivery = selectToolResultDelivery(environment, options.delivery);
+  const evmInterface =
+    options.evmInterface ?? evmInterfaceModule.create(environment);
+  const sqliteDatabase =
+    options.sqliteDatabase ?? createSqliteDatabaseService(environment);
   const binaryLayout =
     options.binaryLayout ?? createBinaryLayoutService(environment);
   const recordedCrash =
     options.recordedCrash ?? createRecordedCrashService(environment);
+  const webSourceLocation =
+    options.webSourceLocation ?? createWebSourceLocationService(environment);
+  const webModuleTrace =
+    options.webModuleTrace ?? createWebModuleTraceService(environment);
+  const javascriptRecovery =
+    options.javascriptRecovery ?? createJavaScriptRecoveryProvider(environment);
   const artifactResources = new ArtifactResourceScope();
+  const firmwareAnalysis = new FirmwareAnalysisService(
+    options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+  );
   const selectedOptions = {
     ...options,
     environment,
     delivery,
+    evmInterface,
+    sqliteDatabase,
     binaryLayout,
     recordedCrash,
+    webSourceLocation,
+    webModuleTrace,
+    javascriptRecovery,
   };
   const startedAt = new Date().toISOString();
   const logger = options.logger ?? silentLogger;
@@ -202,12 +299,47 @@ export const createServer = (
     delivery,
     selectCompactInputSchemaPresentation(environment),
   );
+  const android =
+    options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+  const flutter =
+    options.flutterAnalysis ?? createFlutterBuildAnalysisProvider();
+  const fridaInstrumentation =
+    options.fridaInstrumentation ?? new FridaInstrumentationManager();
+  const wasmArtifact = wasmArtifactModule.create(
+    environment,
+    options.wasmArtifact,
+  );
+  const packetCapture =
+    options.packetCapture ?? createPacketCaptureService(environment);
+  const signalRecording =
+    options.signalRecording ?? createSignalRecordingService(environment);
+  const apktool =
+    options.apktoolAnalysis ??
+    createApktoolResourceAnalysisProvider(environment);
+  const jeb = options.jebAnalysis ?? createJebAnalysisProvider(environment);
+  const adbDevice =
+    options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment);
   let providerClose: Promise<void> | undefined;
   const closeProviders = (): Promise<void> => {
     providerClose ??= Promise.allSettled([
+      android.close(),
+      fridaInstrumentation.closeAll(),
+      wasmArtifact.close(),
+      packetCapture.close(),
+      signalRecording.close(),
+      apktool.close(),
+      jeb.close(),
+      adbDevice.close(),
+      flutter.close(),
+      evmInterface.close(),
+      sqliteDatabase.close(),
       binaryLayout.close(),
       recordedCrash.close(),
+      webSourceLocation.close(),
+      webModuleTrace.close(),
+      javascriptRecovery.close?.() ?? Promise.resolve(),
       artifactResources.close(),
+      firmwareAnalysis.close(),
     ])
       .then((results) => {
         const failures = results.flatMap((result) =>
@@ -226,6 +358,7 @@ export const createServer = (
     session,
     options,
     environment,
+    fridaInstrumentation,
   );
   const toolLogger = logger.child({ layer: "server" });
   const {
@@ -249,6 +382,15 @@ export const createServer = (
     artifactResources,
   };
   registerBinaryAnalysisTools(toolContext);
+  registerFridaTools(
+    server,
+    fridaInstrumentation,
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (input) => session.recordEvidence(input),
+  );
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
@@ -265,7 +407,50 @@ export const createServer = (
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
   };
-  registerConfiguredAnalysisTools(toolContext);
+  registerCaptureTools(
+    server,
+    packetCapture,
+    toolLogger,
+    recordEvidence,
+    analysisAdmission,
+  );
+  registerSignalTools(
+    server,
+    signalRecording,
+    toolLogger,
+    recordEvidence,
+    analysisAdmission,
+  );
+  registerConfiguredAnalysisTools(
+    toolContext,
+    android,
+    wasmArtifact,
+    evmInterface,
+    jeb,
+    firmwareAnalysis,
+  );
+  registerAdbTools(
+    server,
+    new AdbDeviceAnalysisService(adbDevice),
+    toolLogger,
+    recordEvidence,
+    analysisAdmission,
+  );
+  registerFlutterTools(
+    server,
+    new FlutterBuildAnalysisService(flutter),
+    toolLogger,
+    recordEvidence,
+    analysisAdmission,
+    evidenceById,
+  );
+  registerApktoolTools(
+    server,
+    new ApktoolResourceAnalysisService(apktool),
+    toolLogger,
+    recordEvidence,
+    analysisAdmission,
+  );
   registerObservationTools(toolContext);
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {
@@ -275,6 +460,8 @@ export const createServer = (
       ...(availability === undefined
         ? {}
         : { availabilityPolicy: availability.policy }),
+      androidAnalysisAvailability: (signal) =>
+        android.inspectAvailability(signal),
       startedAt,
     });
   }
@@ -305,15 +492,37 @@ const selectCompactInputSchemaPresentation = (
     : undefined;
 };
 
-const registerConfiguredAnalysisTools = ({
-  server,
-  options,
-  environment,
-  logger: toolLogger,
-  evidenceById,
-  recordEvidence,
-  withAdmittedAnalysis,
-}: ServerToolContext): void => {
+const registerConfiguredAnalysisTools = (
+  {
+    server,
+    options,
+    environment,
+    logger: toolLogger,
+    evidenceById,
+    recordEvidence,
+    withAdmittedAnalysis,
+  }: ServerToolContext,
+  android: AndroidAnalysisPort,
+  wasmArtifact: Pick<WasmArtifactService, "inspect" | "close">,
+  evmInterface: EvmInterfaceService,
+  jeb: JebAnalysisPort,
+  firmwareAnalysis: FirmwareAnalysisService,
+): void => {
+  registerAndroidTools(
+    server,
+    new AndroidAnalysisService(android),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+    evidenceById,
+  );
+  registerJebTools(
+    server,
+    new JebAnalysisService(jeb),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   registerBinaryDiagnosticsTools(
     server,
     options.binaryLayout ?? createBinaryLayoutService(environment),
@@ -336,9 +545,85 @@ const registerConfiguredAnalysisTools = ({
     recordEvidence,
     withAdmittedAnalysis,
   );
+  registerGoTools(
+    server,
+    options.goBinary ?? createGoBinaryService(),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerWasmTools(
+    server,
+    wasmArtifact,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+    evidenceById,
+  );
+  registerEvmTools(
+    server,
+    evmInterface,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+    evidenceById,
+  );
+  registerSqliteTools(
+    server,
+    options.sqliteDatabase ?? createSqliteDatabaseService(environment),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   registerRecordedCrashTools(
     server,
     options.recordedCrash ?? createRecordedCrashService(environment),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerFirmwareTools(
+    server,
+    firmwareAnalysis,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerWebModuleTool(
+    server,
+    options.webModuleTrace ?? createWebModuleTraceService(environment),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerWebSourceLocationTool(
+    server,
+    options.webSourceLocation ?? createWebSourceLocationService(environment),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerWebRuntimeTools(
+    server,
+    options.webRuntime ?? createWebRuntimeService(),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerWebNetworkCaptureTool(
+    server,
+    options.webNetworkCapture ?? createWebNetworkCaptureService(environment),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+    evidenceById,
+  );
+  registerJavaScriptRecoveryTool(
+    server,
+    new JavaScriptRecoveryService(
+      options.javascriptRecovery ??
+        createJavaScriptRecoveryProvider(environment),
+    ),
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -387,6 +672,7 @@ const registerBinaryAnalysisTools = ({
   logger,
   activeTarget,
   recordEvidence,
+  recordEvidenceWithUnknown,
   evidenceById,
   withAdmittedAnalysis,
 }: ServerToolContext): void => {
@@ -424,6 +710,15 @@ const registerBinaryAnalysisTools = ({
   };
   registerEvidenceTools(server, NATIVE_TOOL_CONTRACTS, evidenceOptions);
   registerArtifactTools(server, { ...evidenceOptions, evidenceById });
+  registerManagedTools(server, { ...evidenceOptions, evidenceById });
+  if (session !== undefined)
+    registerManagedWorkflowTools(server, {
+      logger,
+      recordEvidence,
+      recordEvidenceWithUnknown,
+      session,
+      withAdmittedAnalysis,
+    });
 };
 
 const registerObservationTools = ({
@@ -437,6 +732,17 @@ const registerObservationTools = ({
   artifactResources,
 }: ServerToolContext): void => {
   const common = { logger, recordEvidence, withAdmittedAnalysis };
+  registerWebScriptTool(server, { ...common, artifactResources });
+  registerBrowserTools(server, {
+    ...common,
+    browser: options.browserObservation,
+    loadFailure: options.optionalProviderLoadFailures?.browserObservation,
+  });
+  registerBrowserScenarioTool(server, {
+    ...common,
+    provider: options.browserScenarioCapture,
+    loadFailure: options.optionalProviderLoadFailures?.browserScenarioCapture,
+  });
   registerElectronTools(server, {
     ...common,
     artifactResources,
@@ -448,6 +754,12 @@ const registerObservationTools = ({
     activeLoadFailure:
       options.optionalProviderLoadFailures?.electronActiveObservation,
   });
+  registerJavaScriptRuntimeObservationTools(server, {
+    ...common,
+    runtime: options.javascriptRuntimeObservation,
+    loadFailure:
+      options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
+  });
   registerApplicationTools(server, {
     evidenceById,
     logger,
@@ -456,4 +768,3 @@ const registerObservationTools = ({
     withAdmittedAnalysis,
   });
 };
-

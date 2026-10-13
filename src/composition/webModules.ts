@@ -1,31 +1,12 @@
 import { WebModuleTraceService } from "../application/WebModuleTraceService.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { LocalWebModuleArtifacts } from "../browser/modules/WebModuleArtifacts.js";
+import { NativeModuleResolver } from "../browser/modules/NativeModuleResolver.js";
 
-/** Assemble optional module tracing stub (stripped in REA-Argonaut). */
+/** Assemble optional module tracing without acquiring a browser or reading files. */
 export const createWebModuleTraceService = (
-  _environment: Readonly<Record<string, string | undefined>> = process.env,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): WebModuleTraceService =>
   new WebModuleTraceService(
-    {
-      load: async () =>
-        err(
-          new AnalysisCapabilityUnavailableError(
-            "web-module-resolution",
-            "trace_web_module_imports",
-            "not_configured",
-          ),
-        ),
-    },
-    {
-      close: async () => {},
-      resolve: async () =>
-        err(
-          new AnalysisCapabilityUnavailableError(
-            "web-module-resolution",
-            "trace_web_module_imports",
-            "not_configured",
-          ),
-        ),
-    },
+    new LocalWebModuleArtifacts(),
+    new NativeModuleResolver(environment),
   );

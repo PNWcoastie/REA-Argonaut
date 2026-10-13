@@ -1,17 +1,6 @@
 import { GoBinaryService } from "../application/go/GoBinaryService.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { GoBinaryProvider } from "../go/GoBinaryProvider.js";
 
-/** Compose bundled offline inspection stub (stripped in REA-Argonaut). */
+/** Compose bundled offline inspection without acquiring a toolchain or starting any process. */
 export const createGoBinaryService = (): GoBinaryService =>
-  new GoBinaryService({
-    identity: { id: "go-binary", name: "Go Binary Reader", version: "unavailable" },
-    inspect: async () =>
-      err(
-        new AnalysisCapabilityUnavailableError(
-          "go-binary",
-          "inspect_go_binary",
-          "not_configured",
-        ),
-      ),
-  });
+  new GoBinaryService(new GoBinaryProvider());
