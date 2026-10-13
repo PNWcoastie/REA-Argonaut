@@ -1,0 +1,129 @@
+{
+  "name": "rea-argonaut",
+  "mcpName": "io.github.morluto/rea-argonaut",
+  "version": "1.0.0",
+  "description": "Zero-G Reverse Engineering & Verified Rust Reconstruction for Gemini 4 Argon + Antigravity",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/morluto/rea.git"
+  },
+  "homepage": "https://github.com/morluto/rea#readme",
+  "bugs": {
+    "url": "https://github.com/morluto/rea/issues"
+  },
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "rust-reconstruction",
+    "agents",
+    "agent-skills",
+    "cli",
+    "mcp-server",
+    "model-context-protocol",
+    "static-analysis",
+    "disassembler",
+    "decompiler",
+    "mcp",
+    "hopper"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "imports": {
+    "#javascript-analysis-worker": "./dist/composition/javascriptAnalysisWorkerProcess.js"
+  },
+  "bin": {
+    "argonaut": "dist/cli.js",
+    "rea-argonaut": "dist/main.js"
+  },
+  "engines": {
+    "node": "^22.19.0 || ^24.11.0 || >=26.0.0"
+  },
+  "packageManager": "npm@11.16.0",
+  "files": [
+    "dist",
+    "bridge",
+    "native/windows/build/manifest.json",
+    "native/windows/build/rea-windows-x64.node",
+    "README.md",
+    "DISCLAIMER.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE",
+    "licenses"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:run": "vitest run",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint"
+  },
+  "dependencies": {
+    "@babel/parser": "8.0.4",
+    "@babel/types": "8.0.4",
+    "@clack/prompts": "1.7.0",
+    "@electron/asar": "4.2.0",
+    "@jridgewell/trace-mapping": "0.3.31",
+    "@lydell/node-pty": "1.1.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@xmldom/xmldom": "0.9.12",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/headless": "6.0.0",
+    "@zip.js/zip.js": "2.15.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "canonicalize": "3.0.0",
+    "cross-spawn": "7.0.6",
+    "diff": "9.0.0",
+    "har-schema": "2.0.0",
+    "ignore": "7.0.6",
+    "incur": "0.6.1",
+    "isomorphic-git": "1.38.7",
+    "jsonc-parser": "3.3.1",
+    "lossless-json": "4.3.1",
+    "parse5": "8.0.1",
+    "pino": "10.4.0",
+    "plist": "5.0.0",
+    "semver": "7.8.5",
+    "smol-toml": "1.9.0",
+    "stream-chain": "4.2.6",
+    "stream-json": "3.7.0",
+    "tokenx": "1.3.0",
+    "write-file-atomic": "7.0.0",
+    "ws": "8.21.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "6.4.4"
+    }
+  },
+  "devDependencies": {
+    "@fast-check/vitest": "0.5.0",
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "26.6.4",
+    "@types/semver": "7.7.1",
+    "@types/write-file-atomic": "4.0.3",
+    "@types/ws": "8.18.1",
+    "@vitest/coverage-v8": "5.0.3",
+    "husky": "9.1.7",
+    "jscpd": "5.0.12",
+    "knip": "6.39.0",
+    "lint-staged": "16.4.0",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "rolldown": "1.2.12",
+    "turbo": "2.11.7",
+    "typescript": "7.0.2",
+    "typescript-termux": "npm:typescript@5.9.3",
+    "vitepress": "1.6.4",
+    "vitest": "5.0.3"
+  }
+}
+
