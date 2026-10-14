@@ -4,7 +4,7 @@
 
 **`REA-Argonaut`** (package: `rea-argonaut`, CLI: `argonaut`, MCP server: `rea-argonaut`) is a cross-platform (`linux`, `darwin`, `win32`) reverse-engineering and verified Rust reconstruction suite, engineered as a first-class **Google Antigravity 2.0 Plugin** and **Model Context Protocol (MCP)** server.
 
-Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains (`187` tools)** while introducing the **`ArgonZeroG` architecture** and **7 new high-throughput forensic, recon-kit & verification tools (`194` total MCP tools)** designed for long-context frontier reasoning models.
+Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains (`187` tools)** while introducing the **`ArgonZeroG` architecture** and **7 new high-throughput forensic, recon-kit & verification tools (`194` total MCP tools across `39` contract domains)** designed for long-context frontier reasoning models.
 
 > [!TIP]
 > **New to Reverse Engineering or Vibe Coding? Start with the Visual User Guide:**  
@@ -36,14 +36,14 @@ Legacy MCP reverse-engineering servers were architected for small-context models
 - **Native `ask_question` Harness Routing:** Pairs with Antigravity's native `ask_question` decision control so users choose which subsystem and which of the **4 Harnesses** (`verified-safe-rust-port`, `clean-room-app-ui-rebuild`, `hardware-hal-protocol-replay`, `security-hazard-audit`) to execute.
 
 ### 3. 2-Tier Cross-Platform Native Engine (`linux`, `darwin`, `win32`)
-- **Tier 1 (Deep Decompiler Engine):** Full Headless Ghidra (`analyzeHeadless` supporting Ghidra `11.x` and `12.x`, with custom Java bridge enhancements for P-Code struct field offset recovery), Hopper Disassembler, and IDA Pro (`idalib`).
+- **Tier 1 (Deep Decompiler Engine — Auto-Detected via `provider: "auto"`):** Works directly with standard desktop installations of **Ghidra (`11.x` and `12.x`)**, **IDA Pro (`idat` / `idalib`)**, **Hopper Disassembler**, and **JEB**. By default, `REA-Argonaut` drives their built-in headless runners in the background so the AI agent never blocks on GUI dialogs—while also exporting standard C headers (`recon-kit/types/recovered_types.h`) that you can import into your interactive Ghidra or IDA Pro desktop GUI (`File -> Parse C Source`) for side-by-side visual analysis.
 - **Tier 2 (`ZeroInstallNativeProvider` Zero-Install Fallback):** Out-of-the-box binary layout, symbol/section discovery, stripped C++ RTTI/VTable slot seeding (`ClassName__vslot_N_<addr>`), call-graph extraction, and disassembly when Ghidra/Hopper/IDA are not installed:
   - **Linux (`ELF`):** GNU `binutils` (`objdump`, `readelf`, `nm`) + native ELF header parser.
   - **macOS (`Mach-O`):** `otool`, `nm`, `lipo`, `llvm-objdump` + universal fat-binary slice parser.
   - **Windows (`PE/COFF`):** `llvm-objdump`, `dumpbin` + native PE/COFF header/import/export parser.
-  - **Python Bridge (`bridge/binutils/rea_binutils_bridge.py`):** Dual-path backend supporting `pwntools` when installed and a **100% Python stdlib fallback** (`elftools` / `objdump` / `otool` / `llvm-objdump`) on clean hosts.
+  - **Python Layout & Crash Bridge (`bridge/pwntools/layout_impl.py` & `recorded_crash_impl.py`):** Dual-path backend supporting `pwntools` when installed and a **100% Python stdlib fallback** on clean hosts.
 
-### 4. 100% Vanilla REA Superset (`35` Retained Domains) + `ArgonZeroG` Forensic Verticals (`194` Total MCP Tools)
+### 4. 100% Vanilla REA Superset (`187` Retained Tools) + `7` `ArgonZeroG` Forensic Verticals (`194` Total MCP Tools Across `39` Domains)
 In addition to every original REA capability (JavaScript/Web bundles, Source Maps, Chrome DevTools/CDP, Frida, GDB/LLDB/WinDbg, Android APK/DEX, iOS IPA, JVM/JAR, .NET CIL, WebAssembly, Electron ASAR, Mach-O/ELF/PE, Hermes/React Native, Lua, Flash SWF, Archives, PCAP/HAR, EVM/Solidity, Firmware, Symbolic Execution, YARA/Capa), `REA-Argonaut` adds purpose-built forensic verticals:
 
 - **`inspect_rust_cpp_binary` — Stripped Rust & Modern C++ Binary Forensics:**

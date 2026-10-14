@@ -21,6 +21,32 @@ Historically, reverse engineering required learning heavyweight tools like **Ghi
 
 ---
 
+## 1.5. Step 0: 30-Second Setup & How Your Computer Auto-Detects Your Tools (`Windows`, `macOS`, `Linux`)
+
+You don't need to configure decompiler paths or know which reverse-engineering tools are installed on your machine before you start:
+
+```bash
+npm install
+npm run build
+node dist/cli.js doctor
+```
+
+### Automatic 2-Tier Decompiler Detection (`provider: "auto"`)
+Whenever you open a binary, `REA-Argonaut` automatically scans your system (`Windows`, `macOS`, or `Linux`) and picks the highest-fidelity engine available:
+
+| Tier | What `REA-Argonaut` Auto-Detects on Your Machine | When You Might Use It |
+| :--- | :--- | :--- |
+| **Tier 1: Full Decompilers**<br>*(Automatically chosen if installed)* | • **Ghidra (`11.x` / `12.x`)**<br>• **IDA Pro (`idat` / `idalib`)**<br>• **Hopper Disassembler** *(macOS / Linux)*<br>• **JEB Decompiler** *(Android APKs)* | Best when you want full symbolic C/C++ decompilation, P-Code struct field offset recovery (`this + 0x14`), and deep cross-reference graphs on massive binaries. |
+| **Tier 2: Zero-Install Engine**<br>*(Automatic fallback if no decompiler is installed)* | Uses your OS's built-in tools + pure-TypeScript binary parsers:<br>• **Windows:** `dumpbin` / `llvm-objdump` + native PE/COFF & MSVC RTTI parser<br>• **macOS:** `otool` / `nm` / `llvm-objdump` + Mach-O Universal parser<br>• **Linux:** `objdump` / `readelf` / `nm` + ELF & Itanium RTTI parser | Best when you want to drop a file in and start **immediately with zero extra downloads**. Even without Ghidra or IDA installed, `export_recon_kit` and `decompile_subgraph` still recover C++/Rust classes, vtables, call graphs, strings, and assembly! |
+
+### Wait—What Does "Headless Ghidra / IDA" Mean vs. the Normal Desktop GUI?
+If you see the term **"Headless Ghidra"** (or headless IDA), here is what that actually means:
+1. **It is NOT a separate download:** When you install normal desktop **Ghidra** (or **IDA Pro**), that single folder already contains both the interactive desktop window (`ghidraRun`) **and** a background script launcher (`support/analyzeHeadless`).
+2. **Why `REA-Argonaut` uses Headless Mode by default:** When an AI agent is extracting a 50-function call graph, you don't want 50 Java pop-up windows freezing on your screen waiting for you to click *"OK"*. So `REA-Argonaut` drives your normal Ghidra/IDA installation invisibly in the background ("headless") over a fast local socket.
+3. **When to use the Desktop GUI side-by-side (Power-User Mode):** What if you *want* to open the normal Ghidra or IDA Pro GUI window to browse graphs with your mouse? Because `export_recon_kit` writes standard C headers (`recon-kit/types/recovered_types.h`) and class vtable maps (`recon-kit/classes/vtable_hierarchy.json`) directly into your workspace folder, you can open your interactive Ghidra or IDA GUI and import `recovered_types.h` (`File -> Parse C Source...`) so your GUI immediately lights up with every recovered class, struct, and method name!
+
+---
+
 ## 2. Who Does What? The 3-Stage Division of Labor Map
 
 ![REA-Argonaut 3-Stage Division of Labor Map](./docs/assets/division-of-labor-map.svg)
@@ -31,9 +57,9 @@ Here is the exact **Trust-but-Verify Division of Labor**:
 
 | Stage | Who Is in Control? | What Actually Happens Under the Hood | Can the AI Hallucinate Here? |
 | :--- | :--- | :--- | :--- |
-| **Stage 1: The X-Ray**<br>(`export_recon_kit` & `decompile_subgraph`) | **100% Deterministic Tool**<br>(`REA-Argonaut` Engine) | **Pass 1A (`export_recon_kit`):** Scans the file's real bytes in ~1 second. Extracts real C++/Rust class hierarchies, virtual method addresses, Electron/Unity/Godot file trees, hardware register maps, or AI model system prompts into `RECON_BLUEPRINT.md` and `recon-kit/`.<br>**Pass 1B (`decompile_subgraph`):** Uses Headless Ghidra (`11.x`/`12.x`) or the built-in `zero-install` engine to extract an entire connected call graph (up to 50 functions, assembly, decompiled C, struct field offsets, and pre-flagged security hazards) in **1 single turn**. | **No (`0%` AI guessing).** Every address, class name, vtable slot, file entry, and assembly instruction comes directly from the file bytes on disk. |
+| **Stage 1: The X-Ray**<br>(`export_recon_kit` & `decompile_subgraph`) | **100% Deterministic Tool**<br>(`REA-Argonaut` Engine) | **Pass 1A (`export_recon_kit`):** Scans the file's real bytes in ~1 second. Extracts real C++/Rust class hierarchies, virtual method addresses, Electron/Unity/Godot file trees, hardware register maps, or AI model system prompts into `RECON_BLUEPRINT.md` and `recon-kit/`.<br>**Pass 1B (`decompile_subgraph`):** Automatically uses your installed Tier-1 decompiler (**Ghidra `11.x`/`12.x`, IDA Pro, or Hopper**) or the built-in **Tier-2 `zero-install` engine** to extract an entire connected call graph (up to 50 functions, assembly, decompiled C, struct field offsets, and pre-flagged security hazards) in **1 single turn**. | **No (`0%` AI guessing).** Every address, class name, vtable slot, file entry, and assembly instruction comes directly from the file bytes on disk. |
 | **Stage 2: The Architect**<br>(`ask_question` & Clean-Room Synthesis) | **You (via `ask_question`)**<br>**+ `Gemini 4 Argon` Swarm** | First, Antigravity presents a native **`ask_question` multiple-choice popup** so *you* choose which subsystem and which of the **4 Engineering Harnesses** to run.<br>Then **Gemini 4 Argon** reads the `recon-kit/` files and cached call subgraph inside its 1M-token context window and writes clean, human-readable `#![forbid(unsafe_code)]` Safe Rust or modern TypeScript/UI code. | **Checked in Stage 3.** The AI writes the new human-readable code, and then immediately hands control back to the deterministic referee in Stage 3. |
-| **Stage 3: The Referee**<br>(`verify_rust_parity` & `cargo test`) | **100% Deterministic Tool**<br>(Sandboxed FFI Fuzzer) | `verify_rust_parity` takes back control from the AI. It loads the original binary and the AI's new Safe Rust code inside an OS sandbox (`bwrap` + `prlimit`) and fires **10,064 randomized + boundary test inputs** at both. If even **1 bit** differs on 1 input out of 10,064, its binary-search shrinker finds the smallest failing input and forces the AI to fix its code until `status === "verified_bit_exact"`. | **No (`0%` blind trust).** You never have to take the AI's word that a port is equivalent—the tool proves it mathematically across 10,064 inputs and runs `cargo test`. |
+| **Stage 3: The Referee**<br>(`verify_rust_parity` & `cargo test`) | **100% Deterministic Tool**<br>(Sandboxed FFI Fuzzer) | `verify_rust_parity` takes back control from the AI. It loads the original binary (`.dll`, `.dylib`, or `.so`) and the AI's new Safe Rust code inside a cross-platform OS sandbox (**Windows** Job Objects, **macOS** `sandbox-exec`, or **Linux** `bwrap` + `prlimit`) and fires **10,064 randomized + boundary test inputs** at both. If even **1 bit** differs on 1 input out of 10,064, its binary-search shrinker finds the smallest failing input and forces the AI to fix its code until `status === "verified_bit_exact"`. | **No (`0%` blind trust).** You never have to take the AI's word that a port is equivalent—the tool proves it mathematically across 10,064 inputs and runs `cargo test`. |
 
 ---
 

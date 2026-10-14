@@ -79,7 +79,7 @@
     1B. decompile_subgraph (Call Subgraph)
   </text>
   <text x="70" y="374" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Tier-1 Ghidra 12.x or Tier-2 Zero-Install
+    • Auto-detects Ghidra/IDA/Hopper or Zero-Install
   </text>
   <text x="70" y="392" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
     • Extracts up to 50 connected functions in 1 call
