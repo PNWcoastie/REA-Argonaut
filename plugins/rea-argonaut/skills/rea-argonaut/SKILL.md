@@ -5,7 +5,7 @@ description: "Zero-G Reverse Engineering Anything & Verified Rust Reconstruction
 
 # REA-Argonaut (`ArgonZeroG` Engine)
 
-`REA-Argonaut` is the Zero-G reverse-engineering and verified reconstruction engine built for **Gemini 4 Argon** and **Google Antigravity 2.0**. It exposes **194 MCP tools** across **39 forensic domains** with unthrottled whole-subgraph extraction (`detail: "full"` by default), 2-tier cross-platform native resilience (Linux, macOS, Windows), a 4-subagent Hub-and-Spoke Super-Swarm, and closed-loop property-based C-to-Rust parity verification.
+`REA-Argonaut` is the Zero-G reverse-engineering and verified reconstruction engine built for **Gemini 4 Argon** and **Google Antigravity 2.0**. It exposes **39 canonical MCP tools** across **35 forensic domains** with unthrottled whole-subgraph extraction (`detail: "full"` by default), 2-tier cross-platform native resilience (Linux, macOS, Windows), a 4-subagent Hub-and-Spoke Super-Swarm, and closed-loop property-based C-to-Rust parity verification.
 
 ## The 5 Core `ArgonZeroG` Operational Laws
 

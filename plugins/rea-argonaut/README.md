@@ -7,7 +7,7 @@ This directory contains the canonical **Google Antigravity 2.0 Plugin** bundle f
 ## Bundle Contents
 
 - [`plugin.json`](./plugin.json) — Canonical Antigravity 2.0 plugin manifest (`name`, `displayName`, `version`, `description`, `logo`, `suggestedPrompts`, `disabled`).
-- [`mcp_config.json`](./mcp_config.json) — Registers the `rea-argonaut-mcp` server (`194` reverse-engineering, 4-Mount recon kit, and verification tools across `39` domains).
+- [`mcp_config.json`](./mcp_config.json) — Registers the `rea-argonaut-mcp` server (`39` canonical reverse-engineering, 4-Mount recon kit, whole-subgraph, and verification MCP tools across `35` domains).
 - [`assets/logo.svg`](./assets/logo.svg) — `256x256` transparent SVG emblem with `>=10%` safe margin for light and dark UI themes.
 - [`rules/AGENTS.md`](./rules/AGENTS.md) — Always-on operational rules enforcing single-call `decompile_subgraph` extraction, `#![forbid(unsafe_code)]` Safe Rust reconstruction, `verify_rust_parity` closed-loop verification, the 4-Phase Recon-to-Argon Handoff (`export_recon_kit`), native `ask_question` decision controls, and hardware-adaptive scaling.
 - [`agents/`](./agents/) — 4 domain-specialized Antigravity 2.0 subagents (`forensic-vertical-specialist`, `subgraph-architect`, `safe-rust-reconstructor`, `adversarial-parity-auditor`).
