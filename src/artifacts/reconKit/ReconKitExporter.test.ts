@@ -146,12 +146,12 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
   });
 
   it("Mount 1 (native-binary): clusters C++ RTTI classes into subsystems and materializes #![forbid(unsafe_code)] Rust types, C headers, vtable JSON, and blueprint with zero HTML files by default", async () => {
-    const binPath = path.join(tempDir, "generals_engine.elf");
-    const outDir = path.join(tempDir, "generals-recon-kit");
+    const binPath = path.join(tempDir, "native_engine.elf");
+    const outDir = path.join(tempDir, "native-recon-kit");
     const elfBuf = buildSyntheticElfWithMsvcRtti([
-      ".?AVFXList@@",
-      ".?AVW3DShader@@",
-      ".?AVXferCRC@@",
+      ".?AVParticleEmitter@@",
+      ".?AVRenderPipeline@@",
+      ".?AVStreamChecksum@@",
     ]);
     await writeFile(binPath, elfBuf);
 
@@ -181,18 +181,18 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
       "utf8",
     );
     expect(rustTypes).toContain("#![forbid(unsafe_code)]");
-    expect(rustTypes).toContain("FXList");
-    expect(rustTypes).toContain("W3DShader");
-    expect(rustTypes).toContain("XferCRC");
+    expect(rustTypes).toContain("ParticleEmitter");
+    expect(rustTypes).toContain("RenderPipeline");
+    expect(rustTypes).toContain("StreamChecksum");
 
     const cHeader = await readFile(
       path.join(outDir, "types/recovered_types.h"),
       "utf8",
     );
     expect(cHeader).toContain("#pragma once");
-    expect(cHeader).toContain("FXList_Vtable");
-    expect(cHeader).toContain("W3DShader_Vtable");
-    expect(cHeader).toContain("XferCRC_Vtable");
+    expect(cHeader).toContain("ParticleEmitter_Vtable");
+    expect(cHeader).toContain("RenderPipeline_Vtable");
+    expect(cHeader).toContain("StreamChecksum_Vtable");
 
     const vtableJsonRaw = await readFile(
       path.join(outDir, "classes/vtable_hierarchy.json"),
@@ -205,7 +205,11 @@ describe("ReconKitExporter (Universal 4-Mount Recon Kit & Blueprint Engine)", ()
     expect(vtableHierarchy.total_classes).toBeGreaterThanOrEqual(3);
     const classNames = vtableHierarchy.classes.map((c) => c.class_name);
     expect(classNames).toEqual(
-      expect.arrayContaining(["FXList", "W3DShader", "XferCRC"]),
+      expect.arrayContaining([
+        "ParticleEmitter",
+        "RenderPipeline",
+        "StreamChecksum",
+      ]),
     );
   });
 

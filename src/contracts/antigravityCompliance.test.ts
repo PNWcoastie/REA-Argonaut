@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -399,7 +400,7 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
       for (const configPath of [mcpConfigPath, settingsExamplePath]) {
         expect(existsSync(configPath)).toBe(true);
         const raw = readFileSync(configPath, "utf8");
-        expect(raw).not.toContain("/home/dr_floral_funk");
+        expect(raw).not.toContain(os.homedir());
 
         const parsed = JSON.parse(raw) as {
           mcpServers?: Record<
@@ -454,11 +455,11 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
         expect(text, `${label} must document RECON_BLUEPRINT.md`).toContain(
           "RECON_BLUEPRINT.md",
         );
-        expect(text).not.toContain("/home/dr_floral_funk");
+        expect(text).not.toContain(os.homedir());
       }
     });
 
-    it("verifies ADAPTIVE_RESOURCE_PROFILE scales dynamically and src/artifacts/reconKit/ contains zero developer machine paths", () => {
+    it("verifies ADAPTIVE_RESOURCE_PROFILE scales dynamically and repository contains zero developer paths or field-test brand names", () => {
       const profile = resolveAdaptiveResourceProfile();
       expect(profile.logicalCores).toBeGreaterThanOrEqual(1);
       expect(profile.totalMemBytes).toBeGreaterThanOrEqual(512 * 1024 * 1024);
@@ -471,9 +472,25 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
       const files = readdirSync(reconKitSrcDir).filter((f) => f.endsWith(".ts"));
       expect(files.length).toBeGreaterThan(0);
 
+      const bannedTerms = [
+        "open" + "front",
+        "cnc" + "3",
+        "tiberium",
+        "command and conquer",
+        "generals_engine",
+        "generals.exe",
+        "w3dshader",
+        "fxlist",
+        "xfercrc",
+      ];
+
       for (const file of files) {
         const content = readFileSync(path.join(reconKitSrcDir, file), "utf8");
-        expect(content).not.toContain("/home/dr_floral_funk");
+        expect(content).not.toContain(os.homedir());
+        const lower = content.toLowerCase();
+        for (const term of bannedTerms) {
+          expect(lower).not.toContain(term);
+        }
       }
     });
   });

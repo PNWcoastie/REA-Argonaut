@@ -544,32 +544,32 @@ function classifyNativeSubsystem(rawName: string): {
   const segments = clean.split("::").filter(Boolean);
   const leaf = segments[segments.length - 1] ?? clean;
 
-  if (/^(?:FXList|FX|Particle)/iu.test(leaf) || /^FX/iu.test(clean)) {
+  if (/^(?:Particle|Emitter|Effect|VFX)/iu.test(leaf) || /^VFX/iu.test(clean)) {
     return {
-      id: "fxlist-subsystem",
-      name: "FXList & Particle Effects Subsystem",
+      id: "particle-fx-subsystem",
+      name: "Particle & Visual Effects Subsystem",
       summary:
-        "Visual effects dispatchers, particle system templates, and FXList execution classes.",
+        "Visual effects dispatchers, particle system templates, and emitter execution classes.",
     };
   }
   if (
-    /^(?:W3D|WW3D|DX8|Shader|Render|Mesh|Texture|Light|Camera|HModel|HLod)/iu.test(
+    /^(?:Shader|Render|Mesh|Texture|Light|Camera|HModel|HLod|SceneGraph)/iu.test(
       leaf,
     )
   ) {
     return {
-      id: "w3d-rendering-subsystem",
-      name: "W3D Rendering Subsystem",
+      id: "rendering-pipeline-subsystem",
+      name: "3D Rendering & Shader Subsystem",
       summary:
         "3D scene graph, hardware shader pipelines, mesh deformers, and texture management.",
     };
   }
-  if (/^(?:Xfer|Snapshot|SaveGame|CRC)/iu.test(leaf)) {
+  if (/^(?:Serializer|Stream|Snapshot|SaveState|CRC|Checksum)/iu.test(leaf)) {
     return {
-      id: "xfer-serialization-subsystem",
-      name: "Xfer Serialization Subsystem",
+      id: "state-serialization-subsystem",
+      name: "State Serialization & Checksum Subsystem",
       summary:
-        "Deterministic state serialization, binary Xfer streams, CRC validation, and snapshot recovery.",
+        "Deterministic state serialization, binary state streams, CRC validation, and snapshot recovery.",
     };
   }
   if (/^(?:INI|Config|AsciiString|UnicodeString|FieldParse)/iu.test(leaf)) {
@@ -580,7 +580,7 @@ function classifyNativeSubsystem(rawName: string): {
         "Configuration table parsing, INI token dispatchers, and engine string primitives.",
     };
   }
-  if (/^(?:Audio|Sound|Music|Miles)/iu.test(leaf)) {
+  if (/^(?:Audio|Sound|Music|Mixer)/iu.test(leaf)) {
     return {
       id: "audio-subsystem",
       name: "Audio & Sound Subsystem",
@@ -588,7 +588,7 @@ function classifyNativeSubsystem(rawName: string): {
         "Spatial 3D audio playback, voice pooling, and streaming sound mixer channels.",
     };
   }
-  if (/^(?:Net|LAN|GameSpy|Packet|Connection|Transport|UDP)/iu.test(leaf)) {
+  if (/^(?:Net|LAN|Session|Packet|Connection|Transport|UDP)/iu.test(leaf)) {
     return {
       id: "network-subsystem",
       name: "Network & Lockstep Protocol Subsystem",

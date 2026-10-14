@@ -145,7 +145,7 @@ export const reconSubsystemEntrySchema = z
     name: z
       .string()
       .min(1)
-      .describe("Human-readable subsystem name (e.g., 'GameLogic', 'W3D Rendering', 'Xfer Serialization', 'Electron Renderer UI')."),
+      .describe("Human-readable subsystem name (e.g., 'Core Engine Runtime', '3D Rendering Pipeline', 'State Serialization', 'Electron Renderer UI')."),
     mount: reconMountKindSchema,
     summary: z.string().min(1),
     class_count: z.number().int().nonnegative(),

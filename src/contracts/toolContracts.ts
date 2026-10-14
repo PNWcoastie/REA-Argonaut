@@ -72,12 +72,13 @@ export const RECON_KIT_TOOL_CONTRACTS = [
         title:
           "Export a Universal 4-Mount Recon Kit for a target binary or artifact",
         input: {
-          path: "/artifacts/Generals.exe",
+          path: "/artifacts/target_binary.exe",
           mount_override: "auto",
           max_subsystems: 50,
           max_classes: 500,
           max_entries: 500,
-          include_explorer_html: true,
+          mock_ui_concepts: false,
+          include_explorer_html: false,
         },
       },
     ],
