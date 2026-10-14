@@ -251,7 +251,7 @@ function renderHardwareRegisterRow(item: ReconHardwareRegisterItem): string {
  * Strictly adheres to Antigravity design principles:
  * - Uses `https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js`
  * - Uses injected host theme variables (`--background`, `--card`, `--foreground`, `--muted-foreground`, `--border`, `--primary`)
- * - Zero `:root` overrides, `>= 12px` (`text-xs`) typography
+ * - Zero local root CSS variable overrides, `>= 12px` (`text-xs`) typography
  * - Purely visual/static layout so it never competes with Antigravity's native `ask_question` tool.
  */
 export function renderReconExplorerHtml(

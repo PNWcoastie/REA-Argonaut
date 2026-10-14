@@ -1212,11 +1212,11 @@ function generateUiPreviewHtml(
   const rowsHtml = items
     .map(
       (item) => `
-      <tr class="asset-row" data-kind="${item.asset_kind}">
-        <td class="mono">${escapeHtml(item.logical_path)}</td>
-        <td><span class="badge">${escapeHtml(item.asset_kind)}</span></td>
-        <td class="mono num">${item.size_bytes.toLocaleString("en-US")} B</td>
-        <td>${escapeHtml(item.summary)}</td>
+      <tr class="asset-row border-b border-[var(--border)]" data-kind="${item.asset_kind}">
+        <td class="py-2.5 px-4 font-mono text-xs text-[var(--foreground)]">${escapeHtml(item.logical_path)}</td>
+        <td class="py-2.5 px-4"><span class="inline-block bg-[var(--secondary)] text-[var(--secondary-foreground)] border border-[var(--border)] rounded-full px-2.5 py-0.5 text-xs font-semibold">${escapeHtml(item.asset_kind)}</span></td>
+        <td class="py-2.5 px-4 font-mono text-xs text-right tabular-nums text-[var(--muted-foreground)]">${item.size_bytes.toLocaleString("en-US")} B</td>
+        <td class="py-2.5 px-4 text-xs text-[var(--muted-foreground)]">${escapeHtml(item.summary)}</td>
       </tr>`,
     )
     .join("");
@@ -1227,80 +1227,30 @@ function generateUiPreviewHtml(
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>UI &amp; Asset Recon Preview — ${escapeHtml(targetName)}</title>
-  <style>
-    :root {
-      --bg-canvas: #0B0F17;
-      --bg-elevated: #111827;
-      --border-subtle: rgba(255, 255, 255, 0.08);
-      --text-primary: #F9FAFB;
-      --text-secondary: #9CA3AF;
-      --accent: #38BDF8;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 32px;
-      background: var(--bg-canvas);
-      color: var(--text-primary);
-      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    header {
-      border-bottom: 1px solid var(--border-subtle);
-      padding-bottom: 16px;
-      margin-bottom: 24px;
-    }
-    h1 { margin: 0 0 8px 0; font-size: 1.5rem; }
-    .meta { color: var(--text-secondary); font-size: 0.875rem; }
-    .mono { font-family: "JetBrains Mono", monospace; font-size: 0.8125rem; }
-    .num { font-variant-numeric: tabular-nums; text-align: right; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border-subtle);
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    th, td {
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--border-subtle);
-      text-align: left;
-    }
-    th {
-      color: var(--text-secondary);
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: rgba(56, 189, 248, 0.14);
-      color: var(--accent);
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
-  </style>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
 </head>
-<body>
-  <header>
-    <h1>Extracted UI &amp; Package Catalog: ${escapeHtml(targetName)}</h1>
-    <div class="meta">Format: <span class="mono">${escapeHtml(detectedFormat)}</span> &bull; Discovered UI/Package Assets: <span class="mono">${String(items.length)}</span></div>
-  </header>
-  <table>
-    <thead>
-      <tr>
-        <th>Logical Path</th>
-        <th>Asset Kind</th>
-        <th class="num">Size</th>
-        <th>Summary</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rowsHtml}
-    </tbody>
-  </table>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-6">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <header class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+      <h1 class="text-[var(--foreground)] font-semibold text-xl">Extracted UI &amp; Package Catalog: ${escapeHtml(targetName)}</h1>
+      <div class="text-[var(--muted-foreground)] text-sm mt-1">Format: <span class="font-mono text-xs text-[var(--primary)]">${escapeHtml(detectedFormat)}</span> &bull; Discovered UI/Package Assets: <span class="font-mono text-xs text-[var(--foreground)]">${String(items.length)}</span></div>
+    </header>
+    <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl shadow-sm overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs uppercase tracking-wider">
+            <th class="py-3 px-4">Logical Path</th>
+            <th class="py-3 px-4">Asset Kind</th>
+            <th class="py-3 px-4 text-right">Size</th>
+            <th class="py-3 px-4">Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </body>
 </html>
 `;

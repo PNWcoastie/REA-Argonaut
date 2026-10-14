@@ -1,6 +1,18 @@
-# Niche Forensic Verticals Guide (16 Domains)
+# Specialized Forensic Verticals Guide (Canonical MCP Tools)
 
-`ArgonZeroG` ships deterministic, pure-TypeScript binary parsers for 16 specialized reverse-engineering verticals. Always invoke the domain-specific vertical tool **before** falling back to generic instruction disassembly.
+`ArgonZeroG` ships deterministic, execution-free binary and container inspectors across all specialized reverse-engineering verticals. Always invoke `export_recon_kit` or the domain-specific vertical MCP tool **before** falling back to generic instruction disassembly.
+
+---
+
+## 0. Universal 4-Mount Recon Kit (`export_recon_kit`)
+- **Target**: Any native binary (`ELF`, `PE`, `Mach-O`), packaged UI/game archive (`IL2CPP`, `Godot .pck`, `Electron .asar`, `PyInstaller`, `APK/DEX`, `.NET`), hardware/firmware/protocol artifact (`SVD`, `DBC`, `UF2`, `DTB`, `PCAP`, `Sigrok`), or AI model/data artifact (`GGUF`, `SafeTensors`, `ONNX`, `TFLite`, `SQLite`).
+- **Forensic Capabilities**:
+  - Automatically detects all applicable mounts (`Mount 1..4`) and writes `RECON_BLUEPRINT.md` and `recon-kit/*.md` + `.json` artifacts directly to `output_dir`.
+  - Emits `0` unsolicited `.html` files by default (`mock_ui_concepts: false`).
+- **Invocation**:
+  ```json
+  { "path": "/path/to/target_artifact", "mount_override": "auto", "mock_ui_concepts": false }
+  ```
 
 ---
 
@@ -17,23 +29,63 @@
 
 ---
 
-## 2. Rust & Modern C++ Binaries (`inspect_rust_cpp_binary`)
-- **Target**: Rust (`rustc`) and C++ (`gcc`/`clang`/`MSVC`) ELF, PE, and Mach-O binaries.
+## 2. Stripped Rust & Modern C++ Binaries (`inspect_rust_cpp_binary`)
+- **Target**: Rust (`rustc`) and C++ (`gcc`/`clang`/`MSVC`) ELF, PE, and Mach-O binaries (including Solana SBF/BPF `.so` programs compiled with `rustc`).
 - **Forensic Capabilities**:
-  - Demangles Rust **v0** (`_RNv...`) and **legacy** (`_ZN...17h...E`) symbols alongside Itanium C++ ABI (`_Z...`) symbols.
-  - Extracts crate dependency graphs from embedded `.comment`, `.rodata` panic strings (`src/main.rs`, `/cargo/registry/src/...`), and `rustc` commit hashes.
-  - Reconstructs C++ RTTI (`_ZTV` vtables, `_ZTI` typeinfo structures) and virtual method dispatch tables.
+  - Demangles Rust **v0** (`_RNv...`) and **legacy** (`_ZN...17h...E`) symbols alongside Itanium C++ ABI (`_Z...`) and MSVC (`?...`) symbols.
+  - Extracts crate dependency graphs from embedded `.comment`, `.rodata` + `.rela.dyn` `core::panicking::Location` tuples (`src/main.rs`, `/cargo/registry/src/...`), and `rustc` commit hashes.
+  - Reconstructs C++ Itanium (`_ZTV` vtables, `_ZTI` typeinfo structures) and MSVC (`RTTICompleteObjectLocator`, `RTTIClassHierarchyDescriptor`, `vftable`) class hierarchies and virtual method dispatch tables.
 - **Invocation**:
   ```json
-  { "path": "/path/to/rust_or_cpp_binary", "max_symbols": 250 }
+  { "path": "/path/to/rust_or_cpp_binary", "max_panic_locations": 500, "max_symbols": 500 }
   ```
 
 ---
 
-## 3. WebAssembly & WASI Modules (`inspect_wasm_module`)
+## 3. Frozen Python & PyInstaller Archives (`inspect_python_frozen_binary`)
+- **Target**: Standalone PyInstaller `ELF`/`PE`/`Mach-O` executables (`MEI\x0c\x0b\x0a\x0b\x0e` CArchive trailer) and compiled Python `.pyc` files (Python `3.8`–`3.14` PEP 552 headers).
+- **Forensic Capabilities**:
+  - Locates the `MEI` CArchive cookie, parses the Table of Contents (`toc_entries`), embedded `PYZ-00.pyz` zlib archive header (`pyz_header`), entrypoint scripts (`entry_scripts`), and bundled native C extensions (`native_extensions`).
+  - Parses marshaled `.pyc` code objects (`code_objects`: `co_name`, `co_varnames`, `co_names`, `co_consts`) and string constants without executing untrusted bytecode.
+- **Invocation**:
+  ```json
+  { "path": "/path/to/pyinstaller_or_pyc", "max_toc_entries": 500, "max_code_objects": 200, "max_strings": 500 }
+  ```
+
+---
+
+## 4. Streaming AI Model & Prompt Forensics (`inspect_ai_model_artifact`)
+- **Target**: `.gguf` (v1–v3), `.safetensors`, `.onnx`, and `.tflite` model files.
+- **Forensic Capabilities**:
+  - Streams only the header/metadata prefix (`header_bytes_read` << `size_bytes`) in `< 50 ms` without loading multi-GB tensor weights into RAM.
+  - Extracts architecture hyperparameters, quantization distribution, tensor shapes/dtypes/offsets, embedded Jinja `tokenizer.chat_template` / system prompts (`extracted_prompts`), and pickle-free `security_audit` checks.
+- **Invocation**:
+  ```json
+  { "path": "/path/to/model.gguf", "max_tensors": 500, "max_metadata": 500 }
+  ```
+
+---
+
+## 5. Game & Application Engine Archives (`inspect_engine_archive`)
+- **Target**:
+  1. **Unity IL2CPP**: `global-metadata.dat` (magic `0xFAB11BAF`, v24–v31).
+  2. **Godot Engine**: `.pck` resource packs (magic `GDPC` / `0x43504447`, v1–v3).
+  3. **Electron**: `.asar` archives (Chromium Pickle header + JSON directory tree).
+- **Forensic Capabilities**:
+  - Unity `global-metadata.dat`: Extracts IL2CPP header version, string literal tables (`il2cpp.string_literals`), C# namespace/type definitions (`il2cpp.types`), and method metadata (`il2cpp.methods`).
+  - Godot `.pck`: Extracts engine version, pack flags, and embedded `res://` file paths, offsets, sizes, and MD5 hashes (`godot_pck.files`).
+  - Electron `.asar`: Parses the Chromium Pickle uint32 header framing, extracts `main_entry_script` from `package.json`, enumerates `asar.files`, and flags native `.node` addons (`asar.native_addons`).
+- **Invocation**:
+  ```json
+  { "path": "/path/to/app.asar", "max_files": 500 }
+  ```
+
+---
+
+## 6. WebAssembly & WASI Artifacts (`inspect_wasm_artifact`)
 - **Target**: `.wasm` modules (`\0asm` magic `0x00 0x61 0x73 0x6d`, version `0x01`).
 - **Forensic Capabilities**:
-  - Decodes all standard WASM sections (`Type`, `Import`, `Function`, `Table`, `Memory`, `Global`, `Export`, `Element`, `Code`, `Data`) and custom `.debug` / `name` sections.
+  - Decodes standard WASM sections (`Type`, `Import`, `Function`, `Table`, `Memory`, `Global`, `Export`, `Element`, `Code`, `Data`) and custom debug/`name` sections.
   - Flags WASI capability imports (`wasi_snapshot_preview1`, `fd_write`, `path_open`, `sock_accept`, `proc_exit`) and linear memory boundaries.
 - **Invocation**:
   ```json
@@ -42,90 +94,21 @@
 
 ---
 
-## 4. JVM `.class` & Android DEX (`inspect_jvm_dex`)
-- **Target**: Java `.class` (`0xCAFEBABE`) and Android Dalvik Executable `.dex` (`dex\n035\0` .. `dex\n039\0`).
+## 7. Android APK / DEX & JVM Packages (`inspect_android_package`)
+- **Target**: Android `.apk`, `.aab`, Dalvik Executable `.dex` (`dex\n035\0` .. `dex\n039\0`), and packaged mobile archives.
 - **Forensic Capabilities**:
-  - `.class`: Parses constant pool tags, access flags, class/superclass/interface hierarchies, field descriptors, and method bytecode attributes (`Code`, `Exceptions`).
-  - `.dex`: Parses `header_item`, `string_ids`, `type_ids`, `proto_ids`, `field_ids`, `method_ids`, and `class_defs`, plus JNI `native` method bindings.
+  - Inspects `AndroidManifest.xml` components, permissions, exported activities/services/receivers, DEX class hierarchies, JNI `native` method bindings, and bundled native `.so` libraries.
 - **Invocation**:
   ```json
-  { "path": "/path/to/classes.dex" }
+  { "path": "/path/to/app.apk" }
   ```
 
 ---
 
-## 5. Packer, Entropy & YARA Triage (`detect_packing_and_yara`)
-- **Target**: Obfuscated, packed, or unknown binaries across ELF, PE, Mach-O, or raw blobs.
+## 8. .NET CIL / CLR Managed Assemblies (`inspect_managed_artifact`)
+- **Target**: Managed Windows PE `.exe` / `.dll` assemblies containing a CLI header (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`, `BSJB` metadata root).
 - **Forensic Capabilities**:
-  - Computes per-section and sliding-window Shannon entropy ($H \in [0.0, 8.0]$ bits/byte), automatically flagging encrypted/compressed sections ($H > 6.8$).
-  - Detects UPX (`UPX0`, `UPX1`, `UPX!` magic), VMProtect (`.vmp0`, `.vmp1`), Themida, ASPack, and MPress signatures.
-  - Evaluates built-in and custom YARA-style hex/string/regex rules for crypto constants (AES S-Boxes, SHA-256 initial vectors, ChaCha20 `"expand 32-byte k"`) and anti-debug markers.
-- **Invocation**:
-  ```json
-  { "path": "/path/to/suspect.bin" }
-  ```
-
----
-
-## 6. eBPF Object Programs (`inspect_ebpf_object`)
-- **Target**: Linux eBPF ELF relocatable objects (`.bpf.o`, `EM_BPF = 247`).
-- **Forensic Capabilities**:
-  - Enumerates hook program sections (`xdp`, `tc`, `kprobe/*`, `kretprobe/*`, `tracepoint/*`, `lsm/*`, `cgroup/*`).
-  - Parses BPF map definitions (`maps` / `.maps` BTF-defined maps: `BPF_MAP_TYPE_HASH`, `BPF_MAP_TYPE_ARRAY`, `BPF_MAP_TYPE_RINGBUF`, `BPF_MAP_TYPE_PERF_EVENT_ARRAY`).
-  - Resolves BPF helper calls (`bpf_probe_read_kernel`, `bpf_skb_load_bytes`, `bpf_override_return`) and `.BTF` / `.BTF.ext` CO-RE relocation metadata.
-- **Invocation**:
-  ```json
-  { "path": "/path/to/filter.bpf.o" }
-  ```
-
----
-
-## 7. Crypto Firmware, SVD & DeviceTree (`inspect_firmware_blob`)
-- **Target**: Flattened DeviceTree blobs (`.dtb`, magic `0xD00DFEED`), CMSIS-SVD XML peripheral maps (`.svd`), and raw microcontroller ROMs (`.bin`, `.hex`).
-- **Forensic Capabilities**:
-  - `.dtb`: Parses `fdt_header`, structure block tokens (`FDT_BEGIN_NODE`, `FDT_PROP`), memory-mapped register ranges (`reg`), and interrupt controllers.
-  - `.svd`: Extracts peripheral base addresses, register offsets, bitfields, and read/write permissions.
-  - Raw ARM Cortex-M firmware: Identifies initial MSP (Main Stack Pointer), Reset_Handler vector tables, and candidate load base addresses.
-- **Invocation**:
-  ```json
-  { "path": "/path/to/board.dtb" }
-  ```
-
----
-
-## 8. Game & Application Engine Archives (`inspect_engine_archive`)
-- **Target**:
-  1. **Unity IL2CPP**: `global-metadata.dat` (magic `0xFAB11BAF`).
-  2. **Godot Engine**: `.pck` resource packs (magic `GDPC` / `0x43504447`).
-  3. **Electron**: `.asar` archives (Chromium Pickle header + JSON directory tree).
-- **Forensic Capabilities**:
-  - Unity `global-metadata.dat`: Extracts IL2CPP header version, string literal tables, namespace/type definitions, and method metadata offsets.
-  - Godot `.pck`: Extracts engine version, pack flags, and embedded file paths, offsets, sizes, and MD5 hashes.
-  - Electron `.asar`: Parses the Chromium Pickle uint32 header framing and recursively enumerates the embedded JSON virtual filesystem (`files`, `offset`, `size`, `unpacked`, `integrity`).
-- **Invocation**:
-  ```json
-  { "path": "/path/to/app.asar" }
-  ```
-
----
-
-## 9. Python `.pyc` & PyInstaller Archives (`inspect_python_bytecode`)
-- **Target**: Compiled Python `.pyc` files (Python 2.7 through 3.13 magic numbers) and PyInstaller `MEI` (`MEI\x0c\x0b\x0a\x0b\x0e`) executables/archives.
-- **Forensic Capabilities**:
-  - `.pyc`: Parses magic number, PEP 552 bitfield/timestamp/hash headers, and marshaled `PyCodeObject` trees (`co_name`, `co_varnames`, `co_names`, `co_consts`, `co_code`).
-  - PyInstaller: Locates the `MEI` CArchive cookie at EOF, parses the Table of Contents (TOC), and lists bundled `.pyc` modules, C extensions (`.so`/`.pyd`), and embedded data files.
-- **Invocation**:
-  ```json
-  { "path": "/path/to/module.pyc" }
-  ```
-
----
-
-## 10. .NET CIL / CLR Assemblies (`inspect_dotnet_assembly`)
-- **Target**: Managed Windows PE `.exe` / `.dll` assemblies containing a CLI header (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`).
-- **Forensic Capabilities**:
-  - Parses the `#~` / `#-` metadata table stream (`Module`, `TypeRef`, `TypeDef`, `Field`, `MethodDef`, `Param`, `InterfaceImpl`, `MemberRef`, `CustomAttribute`, `ImplMap`), `#Strings`, `#US` (user strings), `#GUID`, and `#Blob` heaps.
-  - Extracts `[DllImport]` P/Invoke unmanaged native bindings (`ImplMap`) and method RVA locations.
+  - Parses CLR metadata tables (`Module`, `TypeRef`, `TypeDef`, `Field`, `MethodDef`, `ImplMap`), user strings, and `[DllImport]` P/Invoke native bindings.
 - **Invocation**:
   ```json
   { "path": "/path/to/ManagedAssembly.dll" }
@@ -133,24 +116,10 @@
 
 ---
 
-## 11. Solana SBF / BPF On-Chain Programs (`inspect_solana_program`)
-- **Target**: Solana SBF/BPF shared objects (`.so`, ELF `EM_BPF = 247` or legacy `0x28`).
-- **Forensic Capabilities**:
-  - Extracts the `entrypoint` symbol and detects Anchor framework 8-byte `sha256("global:<instruction_name>")[0..8]` instruction discriminators and account validation handlers.
-  - Audits Solana runtime syscalls (`sol_invoke_signed_c`, `sol_invoke_signed_rust`, `sol_log_`, `sol_sha256`, `sol_keccak256`, `sol_set_return_data`) for Cross-Program Invocation (CPI) and signer privilege analysis.
-- **Invocation**:
-  ```json
-  { "path": "/path/to/solana_program.so" }
-  ```
-
----
-
-## 12. EVM / Solidity Smart Contract Bytecode (`inspect_evm_bytecode`)
+## 9. EVM / Solidity Smart Contract Bytecode (`inspect_evm_interface`)
 - **Target**: Raw EVM bytecode `.bin` or hex-encoded `.hex` files (runtime or creation bytecode).
 - **Forensic Capabilities**:
-  - Disassembles EVM opcodes (`PUSH1`..`PUSH32`, `CALLDATALOAD`, `SHR`, `EQ`, `JUMPI`, `SSTORE`, `SLOAD`, `DELEGATECALL`, `SELFDESTRUCT`).
-  - Extracts 4-byte Solidity function selector dispatch tables (`PUSH4 0x........ EQ PUSH2 0x.... JUMPI`) and resolves common ABI signatures (`transfer(address,uint256)`, `approve(address,uint256)`, `balanceOf(address)`).
-  - Decodes appended CBOR compiler metadata (`ipfs://`, `bzzr0`, `solc` version).
+  - Disassembles EVM opcodes, extracts 4-byte Solidity function selector dispatch tables (`PUSH4 0x........ EQ PUSH2 0x.... JUMPI`), resolves ABI signatures, and decodes CBOR compiler metadata.
 - **Invocation**:
   ```json
   { "path": "/path/to/contract.bin" }
@@ -158,39 +127,21 @@
 
 ---
 
-## 13. UEFI Firmware Volumes, TE & DXE Drivers (`inspect_uefi_image`)
-- **Target**: UEFI Firmware Volumes (`.fv`, `_FVH` signature `0x4856465F`), Terse Executables (`.te`, `VZ` magic `0x5A56`), and EFI PE32+ DXE/SMM drivers (`.efi`).
+## 10. Firmware Images, SVD, UF2 & DeviceTree (`inspect_firmware_regions` & `extract_firmware`)
+- **Target**: Flattened DeviceTree blobs (`.dtb`, magic `0xD00DFEED`), UF2 blocks, CMSIS-SVD peripheral maps (`.svd`), and embedded ROM/flash dumps (`.bin`, `.hex`).
 - **Forensic Capabilities**:
-  - Parses `EFI_FIRMWARE_VOLUME_HEADER`, FFS file GUIDs, and section headers.
-  - Parses Terse Executable (`EFI_TE_IMAGE_HEADER`) stripped headers used in SEC/PEI phases.
-  - Detects well-known EFI protocol GUIDs (`EFI_SMM_BASE2_PROTOCOL_GUID`, `EFI_DXE_SERVICES_TABLE_GUID`, `EFI_GLOBAL_VARIABLE`) and NVRAM variable service calls (`GetVariable`, `SetVariable`).
+  - Maps firmware regions, entropy distributions, embedded filesystems, bootloaders, and memory-mapped peripheral registers (also integrated into `export_recon_kit` Mount 3).
 - **Invocation**:
   ```json
-  { "path": "/path/to/driver.efi" }
+  { "path": "/path/to/firmware.bin" }
   ```
 
 ---
 
-## 14. Multimedia Containers & Shader Bytecode (`inspect_media_shader`)
-- **Target**:
-  - **Shaders**: Vulkan/OpenGL SPIR-V (`.spv`, magic `0x07230203`) and DirectX DXBC (`.dxbc`, magic `DXBC`).
-  - **Containers**: ISO Base Media File Format (`MP4`/`MOV` `ftyp`/`moov`/`mdat` atoms), Matroska/WebM (`EBML` `0x1A45DFA3`), and RIFF (`WAV`/`AVI`/`WEBP`).
+## 11. Network Captures & Web Traffic (`inspect_packet_capture` & `inspect_web_network_capture`)
+- **Target**: libpcap (`.pcap`), `.pcapng`, and `.har` HTTP archive captures.
 - **Forensic Capabilities**:
-  - SPIR-V: Parses version, generator magic, bound IDs, execution models (`Vertex`, `Fragment`, `GLCompute`), `OpEntryPoint`, and `OpName` debug symbols.
-  - DXBC: Parses chunk directory (`RDEF`, `ISGN`, `OSGN`, `SHDR`/`SHEX`, `STAT`).
-  - Containers: Walks box/chunk trees and flags anomalous out-of-bounds atom sizes or trailing hidden payloads.
-- **Invocation**:
-  ```json
-  { "path": "/path/to/shader.spv" }
-  ```
-
----
-
-## 15. Network Protocol Payloads & PCAP (`inspect_network_capture`)
-- **Target**: Classic libpcap (`.pcap`, magic `0xA1B2C3D4` / `0xD4C3B2A1` / nanosecond `0xA1B23C4D`) and PCAPNG (`.pcapng`, Section Header Block `0x0A0D0D0A`).
-- **Forensic Capabilities**:
-  - Parses link-layer frames (Ethernet II / Linux cooked SLL), IPv4/IPv6 headers, and TCP/UDP flows.
-  - Performs deep packet inspection (DPI) for DNS queries/responses, TLS ClientHello SNI (Server Name Indication) & JA3 fingerprint components, HTTP/1.1 headers, and HTTP/2 connection preface (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`).
+  - Parses Ethernet/IPv4/IPv6/TCP/UDP flows, DNS queries, TLS SNI handshakes, and HTTP/WebSocket request/response payloads.
 - **Invocation**:
   ```json
   { "path": "/path/to/capture.pcap" }
@@ -198,15 +149,35 @@
 
 ---
 
-## 16. Legacy Mainframe & Retro Architectures (`inspect_retro_binary`)
-- **Target**:
-  - **MS-DOS / 16-bit**: MZ (`MZ` / `ZM`), NE (16-bit New Executable), LE/LX (Linear Executable / DOS4GW).
-  - **AmigaOS**: Amiga Hunk executables (`HUNK_HEADER = 0x000003F3`).
-  - **Classic Mac OS / PowerPC**: Preferred Executable Format (`Joy!peff` / `pwpc`).
-  - **IBM Mainframe**: z/Architecture / System/390 ELF (`EM_S390 = 22`) and EBCDIC text/record streams.
+## 12. Logic Analyzer & Signal Captures (`decode_signal_recording`)
+- **Target**: Sigrok `.sr` captures, Saleae logic exports, and VCD/CSV digital waveform recordings.
 - **Forensic Capabilities**:
-  - Parses segment/relocation tables, hunk allocations (`HUNK_CODE`, `HUNK_DATA`, `HUNK_BSS`, `HUNK_RELOC32`), PEF loader sections, and translates EBCDIC string literals to UTF-8.
+  - Decodes digital signal channels, timing transitions, and UART/SPI/I2C protocol frames.
 - **Invocation**:
   ```json
-  { "path": "/path/to/legacy.bin" }
+  { "path": "/path/to/capture.sr" }
+  ```
+
+---
+
+## 13. SQLite Databases (`inspect_sqlite_database`)
+- **Target**: `.sqlite`, `.db`, `.sqlite3` files (`SQLite format 3\0` header).
+- **Forensic Capabilities**:
+  - Extracts `sqlite_master` table/index/trigger DDL schemas, page counts, encoding, and bounded table row previews.
+- **Invocation**:
+  ```json
+  { "path": "/path/to/database.sqlite" }
+  ```
+
+---
+
+## 14. Native Binary Layout, PE Resources, Crash Dumps & Generic Artifacts (`inspect_binary_layout`, `inspect_pe_resources`, `inspect_recorded_crash`, `inspect_artifact`)
+- **Target**:
+  - `inspect_binary_layout`: ELF/Mach-O structural layout, sections, segments, dynamic tags (`NEEDED`, `SONAME`, `RPATH`), security mitigations (`PIE`, `NX`, `RELRO`, `Canary`, `FORTIFY`), eBPF objects (`.bpf.o`), and DWARF metadata.
+  - `inspect_pe_resources`: Windows PE/COFF (`.exe`, `.dll`, `.sys`, `.efi`) headers, imports, exports, version info, manifests, and embedded resource directories.
+  - `inspect_recorded_crash`: ELF `ET_CORE` coredumps and Windows Minidump `.dmp` crash state.
+  - `inspect_artifact`: Universal magic-byte, entropy, and container triage across unknown binaries, media containers, shaders, documents, and archives.
+- **Invocation**:
+  ```json
+  { "path": "/path/to/binary_or_artifact" }
   ```

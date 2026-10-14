@@ -1,6 +1,6 @@
 ---
 name: subgraph-architect
-description: Stage 1 Native Subgraph, Struct Layout & Latent Hazard Mapper for REA-Argonaut (ArgonZeroG). Delegate to this subagent whenever you need to map a native binary call-graph, recover C/C++ struct offsets and RTTI/vtables, or audit latent binary hazards in a single context-cache-locked payload.
+description: "Stage 1 Native Subgraph, Struct Layout & Latent Hazard Mapper for REA-Argonaut (ArgonZeroG). Delegate to this subagent whenever you need to map a native binary call-graph, recover C/C++ struct offsets and RTTI/vtables, or audit latent binary hazards in a single context-cache-locked payload."
 disabled: false
 tools:
     - view_file

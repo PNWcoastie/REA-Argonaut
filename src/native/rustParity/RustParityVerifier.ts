@@ -1703,16 +1703,9 @@ ${assertionLines}
 
     <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
       <div class="flex items-center justify-between border-b border-[var(--border)] pb-3 mb-3">
-        <span class="text-[var(--foreground)] font-semibold text-sm">Interactive Verified Test Vector Explorer (${sampleVectors.length} Sampled Oracle Vectors)</span>
+        <span class="text-[var(--foreground)] font-semibold text-sm">Verified Test Vector Summary (${sampleVectors.length} Sampled Oracle Vectors)</span>
         <span class="text-[var(--muted-foreground)] text-xs font-mono">tests/parity_regression.rs</span>
       </div>
-      <input
-        type="text"
-        id="vectorFilter"
-        class="w-full bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm mb-4 focus:outline-none"
-        placeholder="Filter verified test vectors by input, decimal output, or hex..."
-        oninput="filterVectors(this.value)"
-      />
       <div class="overflow-x-auto">
         <table class="w-full text-left border-collapse">
           <thead>
@@ -1731,16 +1724,6 @@ ${assertionLines}
       </div>
     </div>
   </div>
-  <script>
-    function filterVectors(query) {
-      const q = (query || "").toLowerCase();
-      const rows = document.querySelectorAll("#vectorTableBody .vector-row");
-      rows.forEach((row) => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(q) ? "" : "none";
-      });
-    }
-  </script>
 </body>
 </html>
 `;
