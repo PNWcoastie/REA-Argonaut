@@ -4,7 +4,7 @@
 
 **`REA-Argonaut`** (package: `rea-argonaut`, CLI: `argonaut`, MCP server: `rea-argonaut`) is a cross-platform (`linux`, `darwin`, `win32`) reverse-engineering and verified Rust reconstruction suite, engineered as a first-class **Google Antigravity 2.0 Plugin** and **Model Context Protocol (MCP)** server.
 
-Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains** while consolidating and upgrading the surface into **39 high-throughput canonical MCP tools** (including 7 new `ArgonZeroG` forensic, 4-Mount Recon Kit, whole-subgraph, and verification engines) designed for long-context frontier reasoning models.
+Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains (`187` tools)** while introducing the **`ArgonZeroG` architecture** and **7 new high-throughput forensic, recon-kit & verification tools (`194` total MCP tools across `39` contract domains)** designed for long-context frontier reasoning models.
 
 > [!TIP]
 > **New to Reverse Engineering or Vibe Coding? Start with the Visual User Guide:**  
@@ -43,7 +43,7 @@ Legacy MCP reverse-engineering servers were architected for small-context models
   - **Windows (`PE/COFF`):** `llvm-objdump`, `dumpbin` + native PE/COFF header/import/export parser.
   - **Python Layout & Crash Bridge (`bridge/pwntools/layout_impl.py` & `recorded_crash_impl.py`):** Dual-path backend supporting `pwntools` when installed and a **100% Python stdlib fallback** on clean hosts.
 
-### 4. 100% Vanilla REA Superset (`35` Retained Domains) + `ArgonZeroG` Forensic Verticals (`39` Canonical MCP Tools)
+### 4. 100% Vanilla REA Superset (`187` Retained Tools) + `7` `ArgonZeroG` Forensic Verticals (`194` Total MCP Tools Across `39` Domains)
 In addition to every original REA capability (JavaScript/Web bundles, Source Maps, Chrome DevTools/CDP, Frida, GDB/LLDB/WinDbg, Android APK/DEX, iOS IPA, JVM/JAR, .NET CIL, WebAssembly, Electron ASAR, Mach-O/ELF/PE, Hermes/React Native, Lua, Flash SWF, Archives, PCAP/HAR, EVM/Solidity, Firmware, Symbolic Execution, YARA/Capa), `REA-Argonaut` adds purpose-built forensic verticals:
 
 - **`inspect_rust_cpp_binary` — Stripped Rust & Modern C++ Binary Forensics:**
