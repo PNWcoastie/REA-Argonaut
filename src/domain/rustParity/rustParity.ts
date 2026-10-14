@@ -129,7 +129,14 @@ export const verifyRustParityInputSchema = z
       .min(1)
       .optional()
       .describe(
-        "Optional directory path where a standalone verified #![forbid(unsafe_code)] Cargo crate (Cargo.toml, src/lib.rs, tests/parity_regression.rs) and interactive RECONSTRUCTION_DASHBOARD.html will be scaffolded when status === 'verified_bit_exact'.",
+        "Optional directory path where a pure standalone verified #![forbid(unsafe_code)] Rust Cargo crate (Cargo.toml, src/lib.rs, tests/parity_regression.rs) will be scaffolded without HTML clutter when status === 'verified_bit_exact'.",
+      ),
+    html_report_path: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional file path to write an Antigravity generative_ui-compliant HTML parity report when status === 'verified_bit_exact'.",
       ),
     harness_mode: rustParityHarnessModeSchema,
   })
@@ -319,7 +326,11 @@ export const rustParityScaffoldedCrateSchema = z
     dashboard_html_path: z
       .string()
       .min(1)
-      .describe("Absolute path to the interactive RECONSTRUCTION_DASHBOARD.html visual report."),
+      .nullable()
+      .default(null)
+      .describe(
+        "Absolute path to the optional Antigravity generative_ui-compliant HTML parity report when html_report_path is provided, or null when omitted.",
+      ),
   })
   .strict();
 

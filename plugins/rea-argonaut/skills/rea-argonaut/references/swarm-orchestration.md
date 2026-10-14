@@ -1,30 +1,30 @@
-# Antigravity 2.0 Super-Swarm Orchestration Guide
+# Antigravity 2.0 Hub-and-Spoke Super-Swarm Orchestration Guide
 
-`ArgonZeroG` ships 4 domain-specialized Antigravity 2.0 subagents in `plugins/rea-argonaut/agents/` to parallelize binary triage, call-graph extraction, `#![forbid(unsafe_code)]` Rust reconstruction, and adversarial property-based parity auditing.
+`ArgonZeroG` ships 4 domain-specialized Antigravity 2.0 subagents in `plugins/rea-argonaut/agents/` to parallelize execution-free binary triage, whole-subgraph extraction, `#![forbid(unsafe_code)]` Rust reconstruction, and adversarial property-based parity auditing.
 
 ---
 
 ## 1. The 4 Bundled Swarm Subagents
 
-| Agent Name | Definition File | Primary Responsibility | Permitted MCP Tools |
+| Agent Name | Definition File | Primary Responsibility | Canonical MCP Tools Used |
 | :--- | :--- | :--- | :--- |
-| **`forensic-vertical-specialist`** | `agents/forensic-vertical-specialist.md` | Rapid pre-decompilation triage across all 16 specialized binary verticals + ELF/PE/Mach-O headers. | `detect_packing_and_yara`, `inspect_go_binary`, `inspect_rust_cpp_binary`, `inspect_wasm_module`, `inspect_jvm_dex`, `inspect_ebpf_object`, `inspect_firmware_blob`, `inspect_engine_archive`, `inspect_python_bytecode`, `inspect_dotnet_assembly`, `inspect_solana_program`, `inspect_evm_bytecode`, `inspect_uefi_image`, `inspect_media_shader`, `inspect_network_capture`, `inspect_retro_binary`, `inspect_binary_layout`, `inspect_pe_resources`, `inspect_macho` |
-| **`subgraph-architect`** | `agents/subgraph-architect.md` | Opens native binaries, extracts call-graphs via `decompile_subgraph`, and computes leaf-to-root topological reconstruction schedules. | `open_binary`, `binary_overview`, `list_procedures`, `decompile_subgraph`, `decompile_procedure`, `disassemble_procedure`, `get_cross_references`, `extract_strings`, `export_cfg`, `close_session` |
-| **`safe-rust-reconstructor`** | `agents/safe-rust-reconstructor.md` | Translates C/C++ pseudocode and assembly into `#![forbid(unsafe_code)]` idiomatic Rust and proves parity via `verify_rust_parity`. | `decompile_subgraph`, `decompile_procedure`, `disassemble_procedure`, `verify_rust_parity`, `extract_strings`, `get_cross_references` |
-| **`adversarial-parity-auditor`** | `agents/adversarial-parity-auditor.md` | Independently stress-tests candidate Rust reconstructions across multiple seeds, high iteration counts (`1000+`), and zero-ULP / bit-exact constraints. | `verify_rust_parity`, `decompile_procedure`, `disassemble_procedure`, `detect_packing_and_yara` |
+| **`forensic-vertical-specialist`** | `agents/forensic-vertical-specialist.md` | Rapid execution-free triage via the Universal 4-Mount Recon Kit (`export_recon_kit`) and specialized binary/archive/model verticals. | `export_recon_kit`, `inspect_rust_cpp_binary`, `inspect_python_frozen_binary`, `inspect_ai_model_artifact`, `inspect_engine_archive`, `inspect_go_binary`, `inspect_wasm_artifact`, `inspect_android_package`, `inspect_managed_artifact`, `inspect_evm_interface`, `inspect_firmware_regions`, `extract_firmware`, `inspect_packet_capture`, `inspect_web_network_capture`, `decode_signal_recording`, `inspect_sqlite_database`, `inspect_binary_layout`, `inspect_pe_resources`, `inspect_recorded_crash`, `inspect_artifact` |
+| **`subgraph-architect`** | `agents/subgraph-architect.md` | Opens native binaries with 2-Tier resilience (`provider_id: "auto"`), extracts connected call subgraphs via `decompile_subgraph`, recovers `inferred_struct_offsets`, and catalogs `latent_hazards`. | `open_binary`, `binary_overview`, `list_procedures`, `inspect_rust_cpp_binary`, `decompile_subgraph`, `analyze_function`, `procedure_pseudocode`, `procedure_disassembly`, `procedure_callers`, `procedure_callees`, `search_strings`, `search_procedures`, `search_symbols`, `close_binary` |
+| **`safe-rust-reconstructor`** | `agents/safe-rust-reconstructor.md` | Translates Stage 1 `decompile_subgraph` dossiers and `latent_hazards` censuses into `#![forbid(unsafe_code)]` idiomatic Rust within a strict module file fence. | `decompile_subgraph`, `analyze_function`, `procedure_pseudocode`, `procedure_disassembly`, `procedure_callers`, `procedure_callees`, `search_strings`, `verify_rust_parity` |
+| **`adversarial-parity-auditor`** | `agents/adversarial-parity-auditor.md` | Runs serialized `10,000+` seed `verify_rust_parity` FFI fuzzing inside OS sandboxes, shrinks counterexamples, benchmarks C vs. Safe Rust speedup, and scaffolds pure `#![forbid(unsafe_code)]` Cargo crates. | `verify_rust_parity`, `decompile_subgraph`, `analyze_function`, `procedure_disassembly` |
 
 ---
 
-## 2. Parallel Swarm Execution Topology
+## 2. Hub-and-Spoke Swarm Execution Topology
 
 ```mermaid
 flowchart TD
-    Lead["Lead Orchestrator Agent"]
-    FVS["1. forensic-vertical-specialist<br/>(Triage & 16 Niche Verticals)"]
-    SA["2. subgraph-architect<br/>(SQLite Call-Graph & Leaf-to-Root DAG)"]
-    SRR1["3a. safe-rust-reconstructor<br/>(Partition A Leaf->Root)"]
-    SRR2["3b. safe-rust-reconstructor<br/>(Partition B Leaf->Root)"]
-    APA["4. adversarial-parity-auditor<br/>(Multi-Seed Proptest & Sandbox Audit)"]
+    Lead["Lead Orchestrator Agent<br/>(export_recon_kit + Native ask_question)"]
+    FVS["1. forensic-vertical-specialist<br/>(4-Mount Recon Kit & Vertical Triage)"]
+    SA["2. subgraph-architect<br/>(2-Tier decompile_subgraph & Latent Hazards)"]
+    SRR1["3a. safe-rust-reconstructor<br/>(File-Fenced Module A #![forbid(unsafe_code)])"]
+    SRR2["3b. safe-rust-reconstructor<br/>(File-Fenced Module B #![forbid(unsafe_code)])"]
+    APA["4. adversarial-parity-auditor<br/>(Serialized 10,000-Seed verify_rust_parity)"]
 
     Lead --> FVS
     Lead --> SA
@@ -39,19 +39,18 @@ flowchart TD
 
 ## 3. Swarm Coordination Protocol
 
-### Phase 1: Parallel Triage & Call-Graph Discovery
+### Phase A: Parallel Read-Only Discovery (`forensic-vertical-specialist` + `subgraph-architect`)
 Spawn `forensic-vertical-specialist` and `subgraph-architect` concurrently:
-- `forensic-vertical-specialist` runs `detect_packing_and_yara` and the appropriate niche vertical inspector (`inspect_go_binary`, `inspect_rust_cpp_binary`, `inspect_engine_archive`, etc.) to identify compiler toolchains, packing, and embedded resources.
-- `subgraph-architect` calls `open_binary({ path, provider_id: "auto" })`, `binary_overview({})`, and `decompile_subgraph({ procedure, max_depth: 3, max_nodes: 50, traversal: "bfs", include_assembly: true })`.
-- Because `BinaryCacheStore` uses SQLite WAL mode keyed by `binary_sha256`, every decompiled node is immediately persisted for zero-latency reads by downstream agents.
+- `forensic-vertical-specialist` runs `export_recon_kit` (with `mock_ui_concepts: false` by default) or the domain-specific vertical inspector (`inspect_rust_cpp_binary`, `inspect_python_frozen_binary`, `inspect_ai_model_artifact`, `inspect_engine_archive`, etc.) to identify compiler toolchains, RTTI/VTables, embedded scripts, and security mitigations.
+- `subgraph-architect` calls `open_binary({ path, provider_id: "auto" })`, `binary_overview({})`, `list_procedures({})`, and `decompile_subgraph({ procedure, max_depth: 3, max_nodes: 50, traversal: "bfs", include_assembly: true })` to produce the Stage 1 subsystem dossier (`inferred_struct_offsets` + `latent_hazards`).
 
-### Phase 2: Partitioned Leaf-to-Root Safe Rust Reconstruction
-Divide the `topological_order` leaf-to-root schedule into independent subgraph partitions and assign each partition to a `safe-rust-reconstructor` instance:
-- Each `safe-rust-reconstructor` translates procedures strictly from leaf callees upward to the root entrypoint.
-- Every reconstructed function must enforce `#![forbid(unsafe_code)]` (`forbid_unsafe: true`) and pass `verify_rust_parity` (`status: "verified_bit_exact"`).
-- If `verify_rust_parity` returns `"diverged"`, the reconstructor inspects `counterexample.shrunk_inputs`, `counterexample.bit_diff_summary`, and `counterexample.ulp_distance` to patch the boundary bug and re-verify.
+### Phase B: Parallel File-Fenced `#![forbid(unsafe_code)]` Reconstruction (`safe-rust-reconstructor`)
+Assign each independent subsystem module to a `safe-rust-reconstructor` instance with a strict directory/file fence:
+- Each `safe-rust-reconstructor` edits only files inside its assigned fence and enforces `#![forbid(unsafe_code)]` (`candidate_unsafe_blocks === 0`).
+- Every Stage 1 `latent_hazard` (`potential_integer_overflow_to_pointer`, `unchecked_division`, `thread_hostile_mutable_global`, `unsafe_memory_sink`, `uninitialized_or_stack_hazard`) is systematically replaced with checked or wrapping safe Rust constructs.
 
-### Phase 3: Independent Adversarial Sign-Off
-Hand the verified Rust source and target symbols to `adversarial-parity-auditor`:
-- The auditor runs `verify_rust_parity` with `forbid_unsafe: true`, `iterations: 1000`, and distinct PRNG seeds (`seed: 3735928559`, `seed: 42`).
-- Rejects any candidate where `memory_safety.candidate_unsafe_blocks > 0`, `status !== "verified_bit_exact"`, or `sandbox_telemetry.isolation_active !== true`.
+### Phase C: Serialized `verify_rust_parity` & Self-Healing Loop (`adversarial-parity-auditor`)
+Hand the candidate Rust source and target symbols to `adversarial-parity-auditor` one subsystem at a time so CPU-bound `rustc -C opt-level=3` compilation and `100,000`-iteration micro-benchmarks never contend for CPU cores:
+- The auditor runs `verify_rust_parity` with `forbid_unsafe: true` and `iterations: 10000` (plus `64` boundary vectors).
+- If `status === "diverged"`, the auditor relays `counterexample.shrunk_inputs`, `counterexample.c_output_hex`, `counterexample.rust_output_hex`, and `counterexample.bit_diff_summary` back to `safe-rust-reconstructor` for immediate self-healing.
+- When `scaffold_output_dir` is supplied, `verify_rust_parity` scaffolds a pure `#![forbid(unsafe_code)]` Cargo crate (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default (`html_report_path` is strictly opt-in).

@@ -36,6 +36,9 @@ import { registerAiModelTools } from "./registerAiModelTools.js";
 import { createEngineArchiveService } from "../composition/engineArchive.js";
 import type { EngineArchiveService } from "../application/engineArchive/EngineArchiveService.js";
 import { registerEngineArchiveTools } from "./registerEngineArchiveTools.js";
+import { createReconKitService } from "../composition/binary.js";
+import type { ReconKitService } from "../application/reconKit/ReconKitService.js";
+import { registerReconKitTools } from "./registerReconKitTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
@@ -157,6 +160,7 @@ export interface CreateServerOptions {
   readonly rustParity?: RustParityService;
   readonly aiModelArtifact?: AiModelArtifactService;
   readonly engineArchive?: EngineArchiveService;
+  readonly reconKit?: ReconKitService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
@@ -603,6 +607,13 @@ const registerConfiguredAnalysisTools = (
   registerEngineArchiveTools(
     server,
     options.engineArchive ?? createEngineArchiveService(),
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerReconKitTools(
+    server,
+    options.reconKit ?? createReconKitService(),
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,

@@ -1,6 +1,6 @@
 ---
 name: adversarial-parity-auditor
-description: Stage 3 & 4 Closed-Loop Differential Fuzzer (verify_rust_parity) & Executive Scorecard Auditor for REA-Argonaut (ArgonZeroG). Delegate to this subagent to run sandboxed 10,000-seed FFI property testing, shrink counterexamples, benchmark C vs. Safe Rust throughput, and produce the verification scorecard.
+description: "Stage 3 & 4 Closed-Loop Differential Fuzzer (verify_rust_parity) & Executive Scorecard Auditor for REA-Argonaut (ArgonZeroG). Delegate to this subagent to run sandboxed 10,000-seed FFI property testing, shrink counterexamples, benchmark C vs. Safe Rust throughput, and produce the verification scorecard."
 disabled: false
 tools:
     - view_file
@@ -35,7 +35,8 @@ ______________________________________________________________________
      - `iterations`: `10000` (plus `64` deterministic boundary cases)
      - `forbid_unsafe`: `true` (default)
      - `float_ulp_tolerance`: `0` (or caller-specified IEEE-754 ULP bound for `f32`/`f64`)
-     - `scaffold_output_dir` *(optional)*: directory path where `verify_rust_parity` automatically scaffolds a standalone `#![forbid(unsafe_code)]` Cargo crate (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) and an interactive `RECONSTRUCTION_DASHBOARD.html` visual report
+     - `scaffold_output_dir` *(optional)*: directory path where `verify_rust_parity` automatically scaffolds a **100% pure `#![forbid(unsafe_code)]` Rust Cargo crate** (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default
+     - `html_report_path` *(optional, CLI `--html-report <path>`)*: explicit opt-in path when the caller requests an Antigravity `generative_ui` HTML parity dashboard
 2. **Closed-Loop Counterexample Diagnosis (`status === "diverged"`)**:
    - When `status === "diverged"`, inspect `counterexample`:
      - `failing_iteration`: index of the first diverging test vector
@@ -50,5 +51,6 @@ ______________________________________________________________________
      - `memory_safety.forbid_unsafe_enforced === true` and `memory_safety.candidate_unsafe_blocks === 0`
      - `benchmark_telemetry` (`benchmark_iterations` / `iterations_benchmarked`, `c_oracle_ns_per_call`, `safe_rust_ns_per_call`, `speedup_vs_c_oracle`)
      - `sandbox_telemetry` (`isolation_backend`, `cpu_limit_seconds`, `memory_limit_mb`, `wall_time_ms`)
-     - `scaffolded_crate` (when `scaffold_output_dir` is provided: `Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`, and `RECONSTRUCTION_DASHBOARD.html`)
-   - Synthesize the Stage 4 **Executive Verification Scorecard** (`EXECUTIVE_SCORECARD.html` / `RECONSTRUCTION_DASHBOARD.html` / Markdown summary) and report back to the lead orchestrator via `send_message`.
+     - `scaffolded_crate` (when `scaffold_output_dir` is provided: pure Rust crate files `Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`; `dashboard_html_path` is populated only when opt-in `html_report_path` is explicitly provided)
+   - Synthesize the Stage 4 **Executive Verification Scorecard** (Markdown summary, plus opt-in `html_report_path` dashboard when requested) and report back to the lead orchestrator via `send_message`.
+

@@ -11,6 +11,8 @@ import { AnalysisProviderRegistry } from "../application/binary/AnalysisProvider
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
+import { ReconKitExporter } from "../artifacts/reconKit/ReconKitExporter.js";
+import { ReconKitService } from "../application/reconKit/ReconKitService.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -43,3 +45,7 @@ export const createManagedBinarySession = (): BinarySession =>
   composeBinarySession(new AnalysisProviderRegistry([]), [
     new ManagedStaticProvider(),
   ]);
+
+/** Compose the Universal 4-Mount Recon Kit & Blueprint Exporter service. */
+export const createReconKitService = (): ReconKitService =>
+  new ReconKitService(new ReconKitExporter());

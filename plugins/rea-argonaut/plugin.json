@@ -5,9 +5,9 @@
   "description": "Zero-G Reverse Engineering Anything & Sandboxed Closed-Loop Safe Rust Verifier for Gemini 4 Argon and Antigravity 2.0.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
+    "Materialize a 4-Mount Recon Kit and RECON_BLUEPRINT.md for this target with export_recon_kit",
     "Extract the full call subgraph and latent binary hazards from this binary with decompile_subgraph",
-    "Port this native C/C++ subsystem to #![forbid(unsafe_code)] Safe Rust and prove 10,000-seed parity",
-    "Inspect this stripped Rust/C++, PyInstaller, GGUF AI model, or Unity IL2CPP artifact"
+    "Port this native C/C++ subsystem to #![forbid(unsafe_code)] Safe Rust and prove 10,000-seed parity"
   ],
   "disabled": false
 }

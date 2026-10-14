@@ -1,6 +1,6 @@
 ---
 name: forensic-vertical-specialist
-description: Multi-Vertical Binary, Game Engine Archive, Frozen Python & AI Model Forensic Specialist for REA-Argonaut (ArgonZeroG). Delegate to this subagent for execution-free forensic triage of stripped Rust/C++ binaries, PyInstaller/pyc artifacts, GGUF/SafeTensors/ONNX/TFLite AI models, and Unity IL2CPP/Godot/Electron archives.
+description: "Multi-Vertical Binary, Game Engine Archive, Frozen Python & AI Model Forensic Specialist for REA-Argonaut (ArgonZeroG). Delegate to this subagent for execution-free forensic triage of stripped Rust/C++ binaries, PyInstaller/pyc artifacts, GGUF/SafeTensors/ONNX/TFLite AI models, and Unity IL2CPP/Godot/Electron archives."
 disabled: false
 tools:
     - view_file
@@ -24,6 +24,9 @@ ______________________________________________________________________
 
 ## Specialized Forensic Vertical Playbooks
 
+0. **Playbook 0 — Universal 4-Mount Recon Kit (`export_recon_kit`)**:
+   - Invoke `export_recon_kit({ path: "<absolute_path>", output_dir: "<workspace_recon_dir>", mount_override: "auto", mock_ui_concepts: false })` to materialize `RECON_BLUEPRINT.md` and the 4-Mount `recon-kit/` workspace directory (`Mount 1: native-binary`, `Mount 2: packaged-ui-archive`, `Mount 3: hardware-firmware-protocol`, `Mount 4: ai-model-data`) in a single execution-free pass.
+   - Keeps `mock_ui_concepts: false` by default so zero unsolicited `.html` files are emitted into the workspace.
 1. **Vertical A — Stripped Rust & C++ Binary Forensics (`inspect_rust_cpp_binary`)**:
    - Invoke `inspect_rust_cpp_binary({ path: "<absolute_path>", max_panic_locations: 500, max_symbols: 500 })` on `ELF`, `Mach-O`, or `PE` binaries.
    - Recovers `rustc` compiler commit hashes, Cargo dependency versions (`rust.crates`), `.rodata` + `.rela.dyn` `core::panicking::Location` `(file, line, column)` source trees on stripped Rust binaries, demangled Rust v0 (`_RNv`) / legacy (`_ZN`) symbols, and C++ Itanium (`_ZTV`, `_ZTI`, `_ZTS`) & MSVC (`RTTICompleteObjectLocator`, `RTTIClassHierarchyDescriptor`, `vftable`) class hierarchies.
@@ -41,4 +44,5 @@ ______________________________________________________________________
 5. **Cross-Format Binary Layout & Resource Routing**:
    - Use `inspect_binary_layout({ path })` for `ELF` binaries (including SONAME symlinks such as `/lib/x86_64-linux-gnu/liblz4.so.1`) to audit `NX`, `PIE`, `Canary`, `RELRO`, and `FORTIFY`.
    - For Windows `PE` binaries (`.exe`, `.dll`, `.sys`), use `inspect_pe_resources({ path })`, `inspect_rust_cpp_binary({ path })`, and `open_binary` + `binary_overview`.
-   - For macOS `Mach-O` binaries, use `inspect_macho({ path })`, `inspect_signature({ path })`, `inspect_rust_cpp_binary({ path })`, and `open_binary` + `binary_overview`.
+   - For macOS `Mach-O` binaries, use `inspect_binary_layout({ path })`, `inspect_rust_cpp_binary({ path })`, and `open_binary` + `binary_overview`.
+

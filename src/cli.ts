@@ -14,6 +14,7 @@ import { registerPythonFrozenCommands } from "./cli/pythonFrozenCommands.js";
 import { registerRustParityCommands } from "./cli/rustParityCommands.js";
 import { registerAiModelCommands } from "./cli/aiModelCommands.js";
 import { registerEngineArchiveCommands } from "./cli/engineArchiveCommands.js";
+import { registerReconKitCommands } from "./cli/reconKitCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
@@ -121,6 +122,7 @@ export const createCli = (
   registerRustParityCommands(cli, logger);
   registerAiModelCommands(cli, logger);
   registerEngineArchiveCommands(cli, logger);
+  registerReconKitCommands(cli, logger);
   registerSqliteCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
   registerManagedCommands(cli, logger, analysis.runProviderAnalysis);

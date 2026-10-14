@@ -189,25 +189,14 @@ function buildExecutiveScorecardHtml({
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ArgonZeroG Executive Scorecard — Verified C-to-Rust Reconstruction</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
   <style>
-    :root {
-      --bg: #080c14;
-      --panel: #101726;
-      --panel-border: #1e293b;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent-green: #10b981;
-      --accent-cyan: #06b6d4;
-      --accent-amber: #f59e0b;
-      --accent-purple: #8b5cf6;
-    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       padding: 36px 24px 64px;
-      background: radial-gradient(circle at top, #111c35 0%, var(--bg) 60%);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
       line-height: 1.5;
     }
     .container {
@@ -218,9 +207,9 @@ function buildExecutiveScorecardHtml({
       display: inline-block;
       padding: 4px 12px;
       border-radius: 999px;
-      background: rgba(16, 185, 129, 0.14);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      color: #34d399;
+      background: var(--secondary);
+      border: 1px solid var(--border);
+      color: var(--primary);
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.08em;
@@ -232,9 +221,10 @@ function buildExecutiveScorecardHtml({
       font-weight: 800;
       letter-spacing: -0.02em;
       margin: 0 0 8px;
+      color: var(--foreground);
     }
     .subtitle {
-      color: var(--muted);
+      color: var(--muted-foreground);
       font-size: 15px;
       margin: 0 0 28px;
     }
@@ -245,18 +235,17 @@ function buildExecutiveScorecardHtml({
       margin-bottom: 28px;
     }
     .kpi-card {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
+      background: var(--card);
+      border: 1px solid var(--border);
       border-radius: 14px;
       padding: 20px;
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
     }
     .kpi-label {
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.07em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--muted-foreground);
       margin-bottom: 8px;
     }
     .kpi-value {
@@ -265,17 +254,17 @@ function buildExecutiveScorecardHtml({
       letter-spacing: -0.03em;
       margin-bottom: 6px;
     }
-    .kpi-green { color: var(--accent-green); }
-    .kpi-cyan { color: var(--accent-cyan); }
-    .kpi-amber { color: var(--accent-amber); }
-    .kpi-purple { color: var(--accent-purple); }
+    .kpi-green { color: var(--primary); }
+    .kpi-cyan { color: var(--accent); }
+    .kpi-amber { color: var(--primary); }
+    .kpi-purple { color: var(--accent); }
     .kpi-sub {
       font-size: 13px;
-      color: var(--muted);
+      color: var(--muted-foreground);
     }
     .section {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
+      background: var(--card);
+      border: 1px solid var(--border);
       border-radius: 14px;
       padding: 24px;
       margin-bottom: 22px;
@@ -284,6 +273,7 @@ function buildExecutiveScorecardHtml({
       margin: 0 0 14px;
       font-size: 18px;
       font-weight: 700;
+      color: var(--foreground);
     }
     table {
       width: 100%;
@@ -293,11 +283,11 @@ function buildExecutiveScorecardHtml({
     th, td {
       text-align: left;
       padding: 11px 12px;
-      border-bottom: 1px solid var(--panel-border);
+      border-bottom: 1px solid var(--border);
       vertical-align: top;
     }
     th {
-      color: var(--muted);
+      color: var(--muted-foreground);
       font-weight: 600;
       font-size: 12px;
       text-transform: uppercase;
@@ -306,10 +296,11 @@ function buildExecutiveScorecardHtml({
     code {
       font-family: "JetBrains Mono", "Fira Code", monospace;
       font-size: 12.5px;
-      background: rgba(15, 23, 42, 0.75);
+      background: var(--sidebar);
+      border: 1px solid var(--border);
       padding: 2px 6px;
       border-radius: 5px;
-      color: #e2e8f0;
+      color: var(--foreground);
     }
     .badge {
       display: inline-block;
@@ -318,62 +309,63 @@ function buildExecutiveScorecardHtml({
       font-size: 12px;
       font-weight: 600;
     }
-    .badge-ok { background: rgba(16, 185, 129, 0.18); color: #34d399; }
-    .badge-warn { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+    .badge-ok { background: var(--primary); color: var(--primary-foreground); }
+    .badge-warn { background: var(--secondary); color: var(--foreground); border: 1px solid var(--border); }
     .severity {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       padding: 2px 7px;
       border-radius: 4px;
+      border: 1px solid var(--border);
     }
-    .severity-high { background: rgba(239, 68, 68, 0.2); color: #f87171; }
-    .severity-medium { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
-    .severity-low { background: rgba(6, 182, 212, 0.2); color: #22d3ee; }
+    .severity-high { background: var(--secondary); color: var(--primary); }
+    .severity-medium { background: var(--secondary); color: var(--accent); }
+    .severity-low { background: var(--secondary); color: var(--muted-foreground); }
   </style>
 </head>
-<body>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased">
   <div class="container">
-    <div class="eyebrow">ArgonZeroG • Gemini 4 Argon + Antigravity Scorecard</div>
-    <h1>FROM LEGACY C SHARED OBJECTS &amp; BINARY HAZARDS TO A 100% SAFE, VERIFIED RUST SUBSYSTEM</h1>
-    <p class="subtitle">
-      Live end-to-end telemetry against compiled target <code>libargon_showcase.${escapeHtml(ext)}</code> over MCP <code>StdioClientTransport</code>.
+    <div class="eyebrow bg-[var(--secondary)] text-[var(--primary)] border border-[var(--border)]">ArgonZeroG • Gemini 4 Argon + Antigravity Scorecard</div>
+    <h1 class="text-[var(--foreground)]">FROM LEGACY C SHARED OBJECTS &amp; BINARY HAZARDS TO A 100% SAFE, VERIFIED RUST SUBSYSTEM</h1>
+    <p class="subtitle text-[var(--muted-foreground)]">
+      Live end-to-end telemetry against compiled target <code class="bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)]">libargon_showcase.${escapeHtml(ext)}</code> over MCP <code class="bg-[var(--sidebar)] text-[var(--foreground)] border border-[var(--border)]">StdioClientTransport</code>.
     </p>
 
     <div class="kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-label">⚡ Native Rust Speedup</div>
-        <div class="kpi-value kpi-green">${bench.speedup_vs_c_oracle.toFixed(2)}x</div>
-        <div class="kpi-sub">
+      <div class="kpi-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        <div class="kpi-label text-[var(--muted-foreground)] text-xs">⚡ Native Rust Speedup</div>
+        <div class="kpi-value kpi-green text-[var(--primary)]">${bench.speedup_vs_c_oracle.toFixed(2)}x</div>
+        <div class="kpi-sub text-[var(--muted-foreground)]">
           <code>${bench.c_oracle_ns_per_call} ns/call</code> C Oracle vs. <code>${bench.safe_rust_ns_per_call} ns/call</code> Safe Rust (${bench.benchmark_iterations.toLocaleString()} iterations)
         </div>
       </div>
 
-      <div class="kpi-card">
-        <div class="kpi-label">✅ Memory Safety</div>
-        <div class="kpi-value kpi-cyan">0 Unsafe</div>
-        <div class="kpi-sub">
+      <div class="kpi-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        <div class="kpi-label text-[var(--muted-foreground)] text-xs">✅ Memory Safety</div>
+        <div class="kpi-value kpi-cyan text-[var(--accent)]">0 Unsafe</div>
+        <div class="kpi-sub text-[var(--muted-foreground)]">
           <code>#![forbid(unsafe_code)]</code> enforced at compile time • Eliminated <strong>${totalLatentHazards}</strong> legacy binary hazard(s)
         </div>
       </div>
 
-      <div class="kpi-card">
-        <div class="kpi-label">🎯 Output Replication</div>
-        <div class="kpi-value kpi-purple">100.0%</div>
-        <div class="kpi-sub">
+      <div class="kpi-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        <div class="kpi-label text-[var(--muted-foreground)] text-xs">🎯 Output Replication</div>
+        <div class="kpi-value kpi-purple text-[var(--accent)]">100.0%</div>
+        <div class="kpi-sub text-[var(--muted-foreground)]">
           <code>${totalVerifiedSeeds.toLocaleString()} / ${totalVerifiedSeeds.toLocaleString()}</code> deterministic boundary + SplitMix64 FFI seeds matched bit-exact
         </div>
       </div>
 
-      <div class="kpi-card">
-        <div class="kpi-label">⏳ MCP Round-Trip Collapse</div>
-        <div class="kpi-value kpi-amber">${legacyCalls} → ${subgraphCalls} (-${roundTripReductionPct}%)</div>
-        <div class="kpi-sub">
+      <div class="kpi-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        <div class="kpi-label text-[var(--muted-foreground)] text-xs">⏳ MCP Round-Trip Collapse</div>
+        <div class="kpi-value kpi-amber text-[var(--primary)]">${legacyCalls} → ${subgraphCalls} (-${roundTripReductionPct}%)</div>
+        <div class="kpi-sub text-[var(--muted-foreground)]">
           <strong>${latencySpeedupX}x faster</strong> call-graph ingestion (<code>${legacyWallMs} ms</code> → <code>${subgraphWallMs} ms</code>) in 1 cacheable turn
         </div>
       </div>
     </div>
 
-    <div class="section">
+    <div class="section bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
       <h2>1. Whole-Subgraph Extraction (<code>decompile_subgraph</code>) vs. Legacy Micro-Paging</h2>
       <table>
         <thead>
@@ -389,31 +381,31 @@ function buildExecutiveScorecardHtml({
             <td><strong>MCP Tool Round-Trips</strong></td>
             <td><code>${legacyCalls}</code> sequential calls</td>
             <td><code>${subgraphCalls}</code> batch call</td>
-            <td><span class="badge badge-ok">-${roundTripReductionPct}% round-trips</span></td>
+            <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">-${roundTripReductionPct}% round-trips</span></td>
           </tr>
           <tr>
             <td><strong>Wall-Clock Latency</strong></td>
             <td><code>${legacyWallMs} ms</code></td>
             <td><code>${subgraphWallMs} ms</code></td>
-            <td><span class="badge badge-ok">${latencySpeedupX}x faster</span></td>
+            <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">${latencySpeedupX}x faster</span></td>
           </tr>
           <tr>
             <td><strong>Procedures &amp; Call Edges</strong></td>
             <td>4 procedures (manual stitch across 18 turns)</td>
             <td><code>${recoveredNames.join(" → ")}</code> (${subgraphEdgesCount} typed edges)</td>
-            <td><span class="badge badge-ok">100% single-shot topology</span></td>
+            <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">100% single-shot topology</span></td>
           </tr>
           <tr>
             <td><strong>Wire Payload &amp; Context Caching</strong></td>
             <td><code>${legacyWireBytes} B</code> fragmented across 18 turns</td>
             <td><code>${subgraphWireBytes} B</code> in 1 contiguous JSON block</td>
-            <td><span class="badge badge-ok">100% single-turn KV-cache hit</span></td>
+            <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">100% single-turn KV-cache hit</span></td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div class="section">
+    <div class="section bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
       <h2>2. Latent Binary Hazards Automatically Uncovered &amp; Eliminated (${totalLatentHazards} Found)</h2>
       <table>
         <thead>
@@ -431,7 +423,7 @@ function buildExecutiveScorecardHtml({
       </table>
     </div>
 
-    <div class="section">
+    <div class="section bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
       <h2>3. Closed-Loop Self-Healing Rust Verification (<code>verify_rust_parity</code>)</h2>
       <table>
         <thead>
@@ -456,7 +448,7 @@ function buildExecutiveScorecardHtml({
           </tr>
           <tr>
             <td><strong>Attempt 2: Self-Healed Safe Rust</strong><br/><span class="kpi-sub">Guided by shrunk counterexample</span></td>
-            <td><span class="badge badge-ok">${escapeHtml(healedReport.status)}</span></td>
+            <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">${escapeHtml(healedReport.status)}</span></td>
             <td><code>${escapeHtml(healedReport.sandbox_telemetry.isolation_backend)}</code><br/><code>#![forbid(unsafe_code)]</code> (0 unsafe blocks)</td>
             <td>
               <strong><code>${totalVerifiedSeeds.toLocaleString()} / ${totalVerifiedSeeds.toLocaleString()}</code></strong> FFI inputs verified bit-exact (${healedWallMs} ms)<br/>

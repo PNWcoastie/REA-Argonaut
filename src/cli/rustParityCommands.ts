@@ -83,7 +83,14 @@ export const registerRustParityCommands = (
         .min(1)
         .optional()
         .describe(
-          "Optional directory to scaffold a standalone verified Cargo crate and interactive RECONSTRUCTION_DASHBOARD.html",
+          "Optional directory to scaffold a pure standalone verified #![forbid(unsafe_code)] Cargo crate (Cargo.toml, src/lib.rs, tests/parity_regression.rs) without HTML clutter",
+        ),
+      htmlReport: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Optional file path to write an Antigravity generative_ui-compliant HTML parity report when status === 'verified_bit_exact'",
         ),
       harnessMode: z
         .enum(["native-rustc", "cargo-proptest"])
@@ -116,6 +123,9 @@ export const registerRustParityCommands = (
               ...(options.scaffoldOutputDir === undefined
                 ? {}
                 : { scaffold_output_dir: options.scaffoldOutputDir }),
+              ...(options.htmlReport === undefined
+                ? {}
+                : { html_report_path: options.htmlReport }),
               harness_mode: options.harnessMode,
             },
             { signal },
