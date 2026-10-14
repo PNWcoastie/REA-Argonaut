@@ -6,6 +6,14 @@
 
 Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains (`187` tools)** while introducing the **`ArgonZeroG` architecture** and **7 new high-throughput forensic, recon-kit & verification tools (`194` total MCP tools)** designed for long-context frontier reasoning models.
 
+> [!TIP]
+> **New to Reverse Engineering or Vibe Coding? Start with the Visual User Guide:**  
+> Read [**`USER_GUIDE.md` — The Zero-to-Hero Visual Field Manual & Decoder Ring**](./USER_GUIDE.md) for a plain-English walkthrough of the 3-Stage Division of Labor, what each of the 4 Mounts extracts, how to choose between the 4 Engineering Harnesses when Antigravity prompts you via `ask_question`, and copy-paste starter prompts.
+
+![REA-Argonaut 3-Stage Division of Labor Map](./docs/assets/division-of-labor-map.svg)
+
+![The Vibe-Coder & Beginner Decoder Ring — 4 Mounts to 4 Harnesses](./docs/assets/four-mounts-decision-compass.svg)
+
 ---
 
 ## Why `REA-Argonaut`? (`ArgonZeroG` Architecture)
@@ -86,7 +94,7 @@ npm run showcase
 node dist/cli.js doctor
 
 # Materialize a Universal 4-Mount Recon Kit (RECON_BLUEPRINT.md + recon-kit/)
-node dist/cli.js export-recon-kit --path /path/to/target --output-dir ./recon-output
+node dist/cli.js export-recon-kit /path/to/target --output-dir ./recon-output
 
 # Single-call ArgonZeroG call-graph extraction
 node dist/cli.js open /path/to/binary --alias target
