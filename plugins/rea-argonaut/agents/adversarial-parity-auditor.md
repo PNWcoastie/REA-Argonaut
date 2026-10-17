@@ -30,11 +30,11 @@ ______________________________________________________________________
      - `symbol_name`: exported C ABI function name
      - `rust_fn_name`: candidate Rust function name (defaults to `symbol_name`)
      - `rust_source_code`: candidate Safe Rust source code
-     - `arg_types`: ordered C ABI parameter types (`["u32", "u32", ...]` or `"bytes"` from `"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64" | "bool" | "bytes"`, where `"bytes"` automatically bridges a C `(*const u8, usize)` buffer pointer+length pair to a safe Rust `&[u8]` slice)
-     - `return_type`: scalar C ABI return type
+     - `arg_types`: ordered C ABI parameter types (`1..=16` parameters from `"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64" | "f32_finite" | "f64_finite" | "bool" | "bytes"`, where `"bytes"` bridges `(const uint8_t*, size_t)` to `&[u8]` and `"f32_finite"`/`"f64_finite"` generate finite DSP/numerical inputs)
+     - `return_type`: scalar C ABI return type (for functions that mutate an out-buffer, matrix, or struct in place, return `u64` using the pre-injected canonical helpers `argon_digest_bytes`, `argon_digest_u32`, `argon_digest_i32`, `argon_digest_f32`, or `argon_digest_f64`)
      - `iterations`: `10000` (plus `64` deterministic boundary cases)
      - `forbid_unsafe`: `true` (default)
-     - `float_ulp_tolerance`: `0` (or caller-specified IEEE-754 ULP bound for `f32`/`f64`)
+     - `float_ulp_tolerance`: `0` (default; same-host C and Rust link the same system `libm` so transcendentals match at `0 ULP`; when comparing standalone cross-compiled binaries across different `libc` implementations such as `glibc` vs. `musl`/`Bionic`, either link the same `libm` on both targets or allow `1 ULP` for `libm` transcendentals)
      - `scaffold_output_dir` *(optional)*: directory path where `verify_rust_parity` automatically scaffolds a **100% pure `#![forbid(unsafe_code)]` Rust Cargo crate** (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default
      - `html_report_path` *(optional, CLI `--html-report <path>`)*: explicit opt-in path when the caller requests an Antigravity `generative_ui` HTML parity dashboard
 2. **Closed-Loop Counterexample Diagnosis (`status === "diverged"`)**:

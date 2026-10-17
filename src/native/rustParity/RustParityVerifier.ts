@@ -265,6 +265,161 @@ function detectElfMachineArch(rawBuf: Buffer): string | null {
   return null;
 }
 
+const C_DIGEST_HELPERS_PREAMBLE = `/* ArgonZeroG built-in canonical out-buffer / struct digest helpers */
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
+static inline uint64_t argon_avalanche64(uint64_t h) {
+    h ^= h >> 30;
+    h *= 0xbf58476d1ce4e5b9ULL;
+    h ^= h >> 27;
+    h *= 0x94d049bb133111ebULL;
+    h ^= h >> 31;
+    return h;
+}
+
+static inline uint64_t argon_digest_bytes(const void *data, size_t len) {
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < len; ++i) {
+        h ^= (uint64_t)bytes[i];
+        h *= 0x100000001b3ULL;
+    }
+    return argon_avalanche64(h);
+}
+
+static inline uint64_t argon_digest_u32(const uint32_t *vals, size_t count) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < count; ++i) {
+        h ^= (uint64_t)vals[i];
+        h *= 0x100000001b3ULL;
+        h ^= h >> 32;
+    }
+    return argon_avalanche64(h);
+}
+
+static inline uint64_t argon_digest_i32(const int32_t *vals, size_t count) {
+    return argon_digest_u32((const uint32_t *)vals, count);
+}
+
+static inline uint64_t argon_digest_f32(const float *vals, size_t count) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t bits = 0;
+        memcpy(&bits, &vals[i], sizeof(uint32_t));
+        if (bits == 0x80000000U) {
+            bits = 0U;
+        } else if ((bits & 0x7f800000U) == 0x7f800000U && (bits & 0x007fffffU) != 0U) {
+            bits = 0x7fc00000U;
+        }
+        h ^= (uint64_t)bits;
+        h *= 0x100000001b3ULL;
+        h ^= h >> 32;
+    }
+    return argon_avalanche64(h);
+}
+
+static inline uint64_t argon_digest_f64(const double *vals, size_t count) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < count; ++i) {
+        uint64_t bits = 0;
+        memcpy(&bits, &vals[i], sizeof(uint64_t));
+        if (bits == 0x8000000000000000ULL) {
+            bits = 0ULL;
+        } else if ((bits & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && (bits & 0x000fffffffffffffULL) != 0ULL) {
+            bits = 0x7ff8000000000000ULL;
+        }
+        h ^= bits;
+        h *= 0x100000001b3ULL;
+        h ^= h >> 32;
+    }
+    return argon_avalanche64(h);
+}
+`;
+
+const RUST_DIGEST_HELPERS_PREAMBLE = `/// Built-in SplitMix64 avalanche finalizer for canonical out-buffer digests.
+#[inline]
+pub fn argon_avalanche64(mut h: u64) -> u64 {
+    h ^= h >> 30;
+    h = h.wrapping_mul(0xbf58476d1ce4e5b9);
+    h ^= h >> 27;
+    h = h.wrapping_mul(0x94d049bb133111eb);
+    h ^ (h >> 31)
+}
+
+/// Folds a byte slice into a deterministic 64-bit digest matching C \`argon_digest_bytes\`.
+#[inline]
+pub fn argon_digest_bytes(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    argon_avalanche64(h)
+}
+
+/// Folds a \`u32\` slice into a deterministic 64-bit digest matching C \`argon_digest_u32\`.
+#[inline]
+pub fn argon_digest_u32(vals: &[u32]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &v in vals {
+        h ^= v as u64;
+        h = h.wrapping_mul(0x100000001b3);
+        h ^= h >> 32;
+    }
+    argon_avalanche64(h)
+}
+
+/// Folds an \`i32\` slice into a deterministic 64-bit digest matching C \`argon_digest_i32\`.
+#[inline]
+pub fn argon_digest_i32(vals: &[i32]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &v in vals {
+        h ^= (v as u32) as u64;
+        h = h.wrapping_mul(0x100000001b3);
+        h ^= h >> 32;
+    }
+    argon_avalanche64(h)
+}
+
+/// Folds an \`f32\` slice into a canonical 64-bit digest (normalizing \`-0.0\` and \`NaN\` payloads) matching C \`argon_digest_f32\`.
+#[inline]
+pub fn argon_digest_f32(vals: &[f32]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &v in vals {
+        let mut bits = v.to_bits();
+        if bits == 0x8000_0000 {
+            bits = 0;
+        } else if v.is_nan() {
+            bits = 0x7fc0_0000;
+        }
+        h ^= bits as u64;
+        h = h.wrapping_mul(0x100000001b3);
+        h ^= h >> 32;
+    }
+    argon_avalanche64(h)
+}
+
+/// Folds an \`f64\` slice into a canonical 64-bit digest (normalizing \`-0.0\` and \`NaN\` payloads) matching C \`argon_digest_f64\`.
+#[inline]
+pub fn argon_digest_f64(vals: &[f64]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &v in vals {
+        let mut bits = v.to_bits();
+        if bits == 0x8000_0000_0000_0000 {
+            bits = 0;
+        } else if v.is_nan() {
+            bits = 0x7ff8_0000_0000_0000;
+        }
+        h ^= bits;
+        h = h.wrapping_mul(0x100000001b3);
+        h ^= h >> 32;
+    }
+    argon_avalanche64(h)
+}
+`;
+
 function rustStorageType(ty: RustParityScalarType): string {
   const base = normalizeAbiScalarType(ty);
   return base === "bytes" ? "Vec<u8>" : base;
@@ -497,11 +652,18 @@ function generateRustHarnessSource(
     })
     .join("\n");
 
+  const candidateDigestPreamble = sanitizedCandidateSource.includes(
+    "fn argon_digest_bytes",
+  )
+    ? ""
+    : RUST_DIGEST_HELPERS_PREAMBLE;
+
   return `#![allow(dead_code, unused_variables, non_snake_case, unused_mut, unused_parens, overflowing_literals, improper_ctypes_definitions)]
 
 mod candidate {
 ${forbidUnsafeEnforced ? "#![forbid(unsafe_code)]" : ""}
 ${sanitizedCandidateSource}
+${candidateDigestPreamble}
 }
 
 #[cfg(unix)]
@@ -1360,7 +1522,10 @@ export class RustParityVerifier implements RustParityPort {
           );
         }
         const cSourcePath = path.join(workDir, "target.c");
-        await writeFile(cSourcePath, input.c_source_code, "utf8");
+        const fullCSource = input.c_source_code.includes("argon_digest_bytes")
+          ? input.c_source_code
+          : `${C_DIGEST_HELPERS_PREAMBLE}\n${input.c_source_code}`;
+        await writeFile(cSourcePath, fullCSource, "utf8");
 
         const cArgs =
           osPlat === "darwin"
@@ -1653,6 +1818,12 @@ path = "src/lib.rs"
       "$1$2pub fn $3",
     );
 
+    const scaffoldDigestPreamble =
+      exportedRustSource.includes("argon_digest_") &&
+      !exportedRustSource.includes("fn argon_digest_bytes")
+        ? `${RUST_DIGEST_HELPERS_PREAMBLE}\n`
+        : "";
+
     const libRsContent = `#![forbid(unsafe_code)]
 //! ArgonZeroG Verified Safe Rust Reconstruction
 //! - Target: ${targetDesc}
@@ -1662,7 +1833,7 @@ path = "src/lib.rs"
 //! - Native Speedup vs C Oracle: ${speedup}x (${safeRustNs} ns/call Safe Rust vs ${cOracleNs} ns/call C Oracle)
 
 ${exportedRustSource}
-`;
+${scaffoldDigestPreamble}`;
 
     const sampleVectors = payload.sample_vectors ?? [];
     const assertionLines = sampleVectors
