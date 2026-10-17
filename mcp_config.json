@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rea-argonaut-mcp": {
+      "command": "agy-node",
+      "args": ["dist/main.js"],
+      "env": {
+        "MCP_TOOL_RESULT_CONTENT_MODE": "text-only"
+      }
+    }
+  }
+}

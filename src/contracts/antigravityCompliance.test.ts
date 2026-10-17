@@ -388,6 +388,7 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
 
   describe("Checkpoint 5 — MCP Server Naming & Global Namespace Collision Safety", () => {
     it("enforces rea-argonaut prefixed mcpServers keys, text-only mode, and zero hardcoded local paths in mcp_config.json and settings.json.example", () => {
+      const rootMcpConfigPath = path.join(REPO_ROOT, "mcp_config.json");
       const mcpConfigPath = path.join(
         REPO_ROOT,
         "plugins/rea-argonaut/mcp_config.json",
@@ -397,7 +398,11 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
         ".gemini/settings.json.example",
       );
 
-      for (const configPath of [mcpConfigPath, settingsExamplePath]) {
+      for (const configPath of [
+        rootMcpConfigPath,
+        mcpConfigPath,
+        settingsExamplePath,
+      ]) {
         expect(existsSync(configPath)).toBe(true);
         const raw = readFileSync(configPath, "utf8");
         expect(raw).not.toContain(os.homedir());
@@ -423,6 +428,30 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
           );
         }
       }
+
+      expect(readFileSync(rootMcpConfigPath, "utf8")).toBe(
+        readFileSync(mcpConfigPath, "utf8"),
+      );
+      expect(readFileSync(path.join(REPO_ROOT, "rules/AGENTS.md"), "utf8")).toBe(
+        readFileSync(
+          path.join(REPO_ROOT, "plugins/rea-argonaut/rules/AGENTS.md"),
+          "utf8",
+        ),
+      );
+      expect(
+        readFileSync(
+          path.join(REPO_ROOT, "skills/rea-argonaut/SKILL.md"),
+          "utf8",
+        ),
+      ).toBe(
+        readFileSync(
+          path.join(
+            REPO_ROOT,
+            "plugins/rea-argonaut/skills/rea-argonaut/SKILL.md",
+          ),
+          "utf8",
+        ),
+      );
 
       const pluginMcp = JSON.parse(readFileSync(mcpConfigPath, "utf8")) as {
         mcpServers: Record<string, unknown>;
