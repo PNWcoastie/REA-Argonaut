@@ -1,15 +1,20 @@
-# REA-Argonaut (`ArgonZeroG`)
+# REA-Argonaut (ArgonZeroG)
 
-> **Zero-G Reverse Engineering Anything & Sandboxed Closed-Loop Rust Parity Verifier for Gemini 4 Argon + Google Antigravity 2.0**
+![Status](https://img.shields.io/badge/Status-Active_Development-brightgreen)
+![Last Commit](https://img.shields.io/github/last-commit/PNWcoastie/REA-Argonaut)
 
-**`REA-Argonaut`** (package: `rea-argonaut`, CLI: `argonaut`, MCP server: `rea-argonaut`) is a cross-platform (`linux`, `darwin`, `win32`) reverse-engineering and verified Rust reconstruction suite, engineered as a first-class **Google Antigravity 2.0 Plugin** and **Model Context Protocol (MCP)** server.
+> *Zero-G Reverse Engineering Anything & Sandboxed Closed-Loop Rust Parity Verifier for Gemini 4 Argon + Google Antigravity 2.0*
 
-Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains (`187` tools)** while introducing the **`ArgonZeroG` architecture** and **7 new high-throughput forensic, recon-kit & verification tools (`194` total MCP tools across `39` contract domains)** designed for long-context frontier reasoning models.
+**REA-Argonaut** (package: `rea-argonaut`, CLI: `argonaut`, MCP server: `rea-argonaut`) is a cross-platform (`linux`, `darwin`, `win32`) reverse-engineering and verified Rust reconstruction suite, engineered as a first-class **Google Antigravity 2.0 Plugin** and **Model Context Protocol (MCP)** server.
+
+Built as a full superset of [morluto/rea](https://github.com/morluto/rea) (*Reverse Engineer Anything*), `REA-Argonaut` preserves all **35 original REA reverse-engineering domains (`187` tools)** while introducing the **`ArgonZeroG` architecture** and **7 new high-throughput forensic, recon-kit & verification tools (`194` total MCP tools across `39` contract domains)** designed for long-context frontier reasoning models.
+
+> [!IMPORTANT]
+> **Active Development & Rolling Updates:** `REA-Argonaut` is continuously updated with new forensic capabilities, architectural refinements, and parity harness enhancements. Check [Discussions Announcements](https://github.com/PNWcoastie/REA-Argonaut/discussions) or click **Watch** in the top-right corner for the latest drops.
 
 > [!TIP]
-> **New to Reverse Engineering or Vibe Coding? Start with the Visual User Guide:**  
-> Read [**`USER_GUIDE.md` — The Zero-to-Hero Visual Field Manual & Decoder Ring**](./USER_GUIDE.md) for a plain-English walkthrough of the 3-Stage Division of Labor, what each of the 4 Mounts extracts, how to choose between the 4 Engineering Harnesses when Antigravity prompts you via `ask_question`, and copy-paste starter prompts.
-
+> **New to Reverse Engineering or Vibe Coding? Start with the Visual User Guide:**
+> Read [USER_GUIDE.md — The Zero-to-Hero Visual Field Manual & Decoder Ring](./USER_GUIDE.md) for a plain-English walkthrough of the 3-Stage Division of Labor, what each of the 4 Mounts extracts, how to choose between the 4 Engineering Harnesses when Antigravity prompts you via `ask_question`, and copy-paste starter prompts.
 ![REA-Argonaut 3-Stage Division of Labor Map](./docs/assets/division-of-labor-map.svg)
 
 ![The Vibe-Coder & Beginner Decoder Ring — 4 Mounts to 4 Harnesses](./docs/assets/four-mounts-decision-compass.svg)
