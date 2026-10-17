@@ -20,11 +20,13 @@ export const rustParityScalarTypeSchema = z
     "u64",
     "f32",
     "f64",
+    "f32_finite",
+    "f64_finite",
     "bool",
     "bytes",
   ])
   .describe(
-    "Scalar or byte-slice ('bytes': (*const u8, usize) in C ABI <-> &[u8] in Safe Rust) type for FFI differential property testing.",
+    "Scalar or byte-slice ('bytes': (*const u8, usize) in C ABI <-> &[u8] in Safe Rust; 'f32_finite'/'f64_finite': finite normal/subnormal IEEE-754 floats for DSP/numerical kernels) type for FFI differential property testing.",
   );
 
 export type RustParityScalarType = z.infer<typeof rustParityScalarTypeSchema>;
