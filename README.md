@@ -164,3 +164,5 @@ Or via `npx`:
 Released under the [MIT License](./LICENSE).
 
 `REA-Argonaut` gratefully acknowledges and builds upon [`morluto/rea`](https://github.com/morluto/rea) (*Reverse Engineer Anything*, Copyright (c) 2026 morluto, MIT License), preserving its complete multi-domain reverse-engineering architecture, process supervision, and decompiler bridges while extending it with the `ArgonZeroG` subgraph engine, zero-install cross-platform fallback, specialized forensic inspectors, and sandboxed Rust parity verifier. See [`LICENSE`](./LICENSE) and [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) for full details.
+
+[![M8ven Score](https://m8ven.ai/badge/mcp/pnwcoastie-rea-argonaut-vdl26v?v=3dde04a6dc6525aaf89835c2610928b7)](https://m8ven.ai/mcp/pnwcoastie-rea-argonaut-vdl26v?s=readme)
