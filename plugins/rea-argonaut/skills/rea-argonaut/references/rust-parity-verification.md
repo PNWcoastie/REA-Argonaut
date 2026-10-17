@@ -42,10 +42,25 @@ When the target procedure is non-exported (`static`) or requires a custom struct
 }
 ```
 
-### Supported `arg_types` & `return_type`
+### Supported `arg_types` (`1..=16`) & `return_type`
 - **Scalar Integers**: `"i8"`, `"u8"`, `"i16"`, `"u16"`, `"i32"`, `"u32"`, `"i64"`, `"u64"`, `"bool"`
-- **Floating Point**: `"f32"`, `"f64"` (supports configurable `float_ulp_tolerance`, default `0`)
+- **Floating Point**: `"f32"`, `"f64"` (full IEEE-754 bit-pattern fuzzing with canonical `NaN` and `+0.0 == -0.0` equivalence), plus `"f32_finite"` and `"f64_finite"` (finite-domain DSP/numerical fuzzing in `[-1e6, 1e6]`)
 - **Buffer Slices (`arg_types` only)**: `"bytes"` — automatically bridges a C ABI `(const uint8_t* ptr, size_t len)` pointer+length pair to a safe `&[u8]` slice in the Rust candidate function.
+
+### Built-In Canonical Out-Buffer & Struct Digest Helpers (`argon_digest_*`)
+When verifying a C/C++ function that mutates an output array, matrix, or struct in-place (`void fn(..., float* out_buf)`), `verify_rust_parity` automatically injects matching 64-bit FNV-1a + SplitMix64 digest helpers into both the C compilation unit and the Safe Rust candidate module (`return_type: "u64"`):
+- **C Oracle Helpers (pre-included)**:
+  - `uint64_t argon_digest_bytes(const void *data, size_t len)`
+  - `uint64_t argon_digest_u32(const uint32_t *vals, size_t count)` / `argon_digest_i32(const int32_t *vals, size_t count)`
+  - `uint64_t argon_digest_f32(const float *vals, size_t count)` / `argon_digest_f64(const double *vals, size_t count)` *(automatically canonicalizes `-0.0` to `+0.0` and any `NaN` payload to canonical quiet `NaN` before hashing)*
+- **Safe Rust Candidate Helpers (pre-included in `mod candidate` and scaffolded `src/lib.rs`)**:
+  - `argon_digest_bytes(data: &[u8]) -> u64`
+  - `argon_digest_u32(vals: &[u32]) -> u64` / `argon_digest_i32(vals: &[i32]) -> u64`
+  - `argon_digest_f32(vals: &[f32]) -> u64` / `argon_digest_f64(vals: &[f64]) -> u64`
+
+### Cross-`libm` Transcendental Note (`glibc` vs. `musl` / `Bionic` / `libsystem_m`)
+- Inside `verify_rust_parity` on the same host, both the C oracle and Safe Rust link the same system `libm`, so `sinf`, `cosf`, `atan2f`, `asinf`, `expf`, and `logf` match at `0 ULP` (`float_ulp_tolerance: 0`).
+- When cross-compiling standalone verification binaries across distinct C standard libraries (e.g., `x86_64-unknown-linux-gnu` `glibc` vs. `aarch64-unknown-linux-musl` `musl` or Android `Bionic`), `libm` polynomial approximations for transcendentals can differ by `1 ULP`. Link the same `libm` on both targets (e.g., `musl` on both `x86_64` and `aarch64`) for `0 ULP` digest identity, or set `float_ulp_tolerance: 1` for transcendental kernels.
 
 ### Clean Cargo Crate Scaffolding (`scaffold_output_dir`) & Opt-In HTML Report (`html_report_path`)
 - **`scaffold_output_dir` *(optional)***: When provided and `status === "verified_bit_exact"`, `verify_rust_parity` scaffolds a **100% pure `#![forbid(unsafe_code)]` Rust Cargo crate** (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default.
