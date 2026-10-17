@@ -16,6 +16,8 @@ Built as a full superset of [`morluto/rea`](https://github.com/morluto/rea) (*Re
 
 ---
 
+[![REA-Argonaut (ArgonZeroG) on AI Agents Listing](https://aiagentslisting.com/rea-argonaut-argonzerog/badge.svg?claim=f7a0bb0be0b732622c6d0634551a205c)](https://aiagentslisting.com/mcp/rea-argonaut-argonzerog)
+
 ## Why `REA-Argonaut`? (`ArgonZeroG` Architecture)
 
 Legacy MCP reverse-engineering servers were architected for small-context models, enforcing tiny pagination limits (`64`-character string previews, `50`-line pseudocode slices, `20`-row table pages) that force frontier agents into hundreds of sequential RPC round-trips and destroy KV context-cache reuse.
