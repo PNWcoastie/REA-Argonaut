@@ -78,9 +78,9 @@ export const verifyRustParityInputSchema = z
     arg_types: z
       .array(rustParityScalarTypeSchema)
       .min(1)
-      .max(8)
+      .max(16)
       .describe(
-        "Ordered list of C ABI parameter types accepted by both the C symbol and Rust function (1 to 8 arguments; 'bytes' passes (*const u8, usize) to C and &[u8] to Rust).",
+        "Ordered list of C ABI parameter types accepted by both the C symbol and Rust function (1 to 16 arguments; 'bytes' passes (*const u8, usize) to C and &[u8] to Rust).",
       ),
     return_type: rustParityScalarTypeSchema.describe(
       "Scalar C ABI return type produced by both the C symbol and Rust function.",
