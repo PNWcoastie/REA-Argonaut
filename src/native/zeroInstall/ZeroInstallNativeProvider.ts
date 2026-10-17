@@ -206,6 +206,14 @@ interface ParsedProcedure {
   readonly localDisplacements: readonly number[];
 }
 
+interface GotSlotBinding {
+  readonly gotAddress: bigint;
+  readonly symbolName: string;
+  readonly targetAddress: bigint;
+  readonly isWritableGlobal: boolean;
+  readonly isFunction: boolean;
+}
+
 interface BinaryAnalysisModel {
   readonly bytes: Buffer;
   readonly sha256: string;
@@ -216,6 +224,7 @@ interface BinaryAnalysisModel {
   readonly architecture: string;
   readonly segments: readonly ParsedSegment[];
   readonly symbolsByAddr: Map<bigint, ParsedSymbol>;
+  readonly gotSlotByAddr: ReadonlyMap<bigint, GotSlotBinding>;
   readonly rttiAnnotationsByAddr: Map<bigint, string>;
   readonly proceduresByAddr: Map<bigint, ParsedProcedure>;
   readonly sortedProcedures: readonly ParsedProcedure[];
@@ -1567,14 +1576,56 @@ class ZeroInstallSession {
           `  /* ref string ${strLit} */ // @ ${toHex(ins.address)}: ${ins.mnemonic} ${ins.operands.join(", ")}`,
         );
       } else if (
+        ins.targetAddress !== null &&
+        (model.gotSlotByAddr.has(ins.targetAddress) ||
+          model.symbolsByAddr.has(ins.targetAddress))
+      ) {
+        const gotEntry = model.gotSlotByAddr.get(ins.targetAddress);
+        const symName =
+          gotEntry?.symbolName ??
+          model.symbolsByAddr.get(ins.targetAddress)?.name ??
+          toHex(ins.targetAddress);
+        lines.push(
+          `  /* ref global ${symName} (${toHex(ins.targetAddress)}) */ ${ins.operands[0] ?? "reg"} = &${symName}; // @ ${toHex(ins.address)}: ${ins.mnemonic} ${ins.operands.join(", ")}`,
+        );
+      } else if (
         m.startsWith("mov") ||
         m.startsWith("lea") ||
+        m.startsWith("adr") ||
         m.startsWith("add") ||
         m.startsWith("sub") ||
+        m.startsWith("mul") ||
+        m === "madd" ||
+        m === "msub" ||
+        m === "sdiv" ||
+        m === "udiv" ||
+        m.startsWith("fmov") ||
+        m.startsWith("fadd") ||
+        m.startsWith("fsub") ||
+        m.startsWith("fmul") ||
+        m.startsWith("fdiv") ||
+        m.startsWith("fcmp") ||
+        m.startsWith("fcvt") ||
+        m.startsWith("scvtf") ||
+        m.startsWith("ucvtf") ||
+        m.startsWith("uabd") ||
+        m.startsWith("uaddlp") ||
+        m.startsWith("usra") ||
         m.startsWith("xor") ||
+        m.startsWith("eor") ||
+        m.startsWith("orr") ||
+        m.startsWith("and") ||
+        m.startsWith("lsl") ||
+        m.startsWith("lsr") ||
+        m.startsWith("asr") ||
+        m.startsWith("sxtw") ||
         m.startsWith("cmp") ||
         m.startsWith("str") ||
-        m.startsWith("ldr")
+        m.startsWith("stur") ||
+        m.startsWith("stp") ||
+        m.startsWith("ldr") ||
+        m.startsWith("ldur") ||
+        m.startsWith("ldp")
       ) {
         if (ins.operands.length >= 2) {
           lines.push(
@@ -2035,6 +2086,9 @@ class ZeroInstallSession {
     proc: ParsedProcedure,
     model: BinaryAnalysisModel,
   ): Array<Readonly<Record<string, JsonValue>>> {
+    if (proc.thunk) {
+      return [];
+    }
     const hazards = new Map<string, Readonly<Record<string, JsonValue>>>();
     const recordHazard = (
       category:
@@ -2171,6 +2225,8 @@ class ZeroInstallSession {
         m.startsWith("inc") ||
         m.startsWith("dec") ||
         m.startsWith("str") ||
+        m.startsWith("stur") ||
+        m.startsWith("stp") ||
         m.startsWith("xchg") ||
         m.startsWith("cmpxchg");
       const writesRipRelativeIntel =
@@ -2183,31 +2239,56 @@ class ZeroInstallSession {
         !m.startsWith("lea") &&
         ins.operands.length >= 2 &&
         lastOpLower.includes("(%rip)");
+      const gotBinding =
+        ins.targetAddress !== null
+          ? model.gotSlotByAddr.get(ins.targetAddress)
+          : undefined;
+      const accessesWritableGotGlobal =
+        gotBinding !== undefined &&
+        gotBinding.isWritableGlobal &&
+        !gotBinding.isFunction;
       const writesGlobalTarget =
-        isMutatingMnem &&
         !m.startsWith("lea") &&
+        gotBinding?.isFunction !== true &&
         ins.targetAddress !== null &&
         isWritableGlobalAddr(ins.targetAddress) &&
-        (firstOpLower.includes("rip") ||
-          lastOpLower.includes("(%rip)") ||
-          m.startsWith("add") ||
-          m.startsWith("sub") ||
-          m.startsWith("xor") ||
-          m.startsWith("or") ||
-          m.startsWith("and") ||
-          m.startsWith("inc") ||
-          m.startsWith("dec") ||
-          m.startsWith("str") ||
-          (m.startsWith("mov") &&
-            (firstOpLower.includes("[") || lastOpLower.includes("(%rip)"))));
+        ((isMutatingMnem &&
+          (firstOpLower.includes("rip") ||
+            lastOpLower.includes("(%rip)") ||
+            m.startsWith("add") ||
+            m.startsWith("sub") ||
+            m.startsWith("xor") ||
+            m.startsWith("or") ||
+            m.startsWith("and") ||
+            m.startsWith("inc") ||
+            m.startsWith("dec") ||
+            m.startsWith("str") ||
+            m.startsWith("stur") ||
+            m.startsWith("stp") ||
+            (m.startsWith("mov") &&
+              (firstOpLower.includes("[") || lastOpLower.includes("(%rip)"))))) ||
+          (m.startsWith("ldr") &&
+            model.symbolsByAddr.get(ins.targetAddress)?.isFunction === false));
 
-      if (writesRipRelativeIntel || writesRipRelativeAtt || writesGlobalTarget) {
+      if (
+        writesRipRelativeIntel ||
+        writesRipRelativeAtt ||
+        writesGlobalTarget ||
+        accessesWritableGotGlobal
+      ) {
+        const resolvedSym =
+          gotBinding?.symbolName ??
+          (ins.targetAddress !== null
+            ? model.symbolsByAddr.get(ins.targetAddress)?.name
+            : undefined);
+        const symClause =
+          resolvedSym !== undefined ? ` ('${resolvedSym}')` : "";
         recordHazard(
           "thread_hostile_mutable_global",
           "medium",
           addrHex,
           rendered,
-          "Instruction mutates process-global state in a writable data/BSS section without synchronization; move state into an explicit context struct or Atomic/Mutex in Safe Rust.",
+          `Instruction accesses or mutates process-global state${symClause} in a writable data/BSS section without synchronization; move state into an explicit context struct or Atomic/Mutex in Safe Rust.`,
         );
       }
 
@@ -2325,14 +2406,37 @@ class ZeroInstallSession {
       const m = mnem.toLowerCase();
       const lower = rawText.toLowerCase();
       if (m === "lea" || m === "leal" || m === "leaq") return 0;
-      if (lower.includes("byte ptr") || m.endsWith("b") || m === "ldrb" || m === "strb") {
+      if (
+        lower.includes("byte ptr") ||
+        m === "ldrb" ||
+        m === "ldrsb" ||
+        m === "ldurb" ||
+        m === "strb" ||
+        m === "sturb"
+      ) {
         return 1;
       }
       if (lower.includes("word ptr") && !lower.includes("dword ptr") && !lower.includes("qword ptr")) {
         return 2;
       }
-      if (m === "ldrh" || m === "strh" || m === "movw") return 2;
-      if (lower.includes("dword ptr") || m === "movl" || m === "addl" || m === "cmpl") {
+      if (
+        m === "ldrh" ||
+        m === "ldrsh" ||
+        m === "ldurh" ||
+        m === "strh" ||
+        m === "sturh" ||
+        m === "movw"
+      ) {
+        return 2;
+      }
+      if (
+        lower.includes("dword ptr") ||
+        m === "movl" ||
+        m === "addl" ||
+        m === "cmpl" ||
+        m === "ldrsw" ||
+        m === "ldursw"
+      ) {
         return 4;
       }
       if (lower.includes("qword ptr") || m === "movq" || m === "addq" || m === "cmpq") {
@@ -2340,10 +2444,11 @@ class ZeroInstallSession {
       }
       for (const op of ops) {
         const clean = op.replace(/^%/u, "").trim().toLowerCase();
-        if (/^(?:[abcd]l|[sd]il|r(?:8|9|1[0-5])b)$/u.test(clean)) return 1;
-        if (/^(?:[abcd]x|[sd]i|r(?:8|9|1[0-5])w)$/u.test(clean)) return 2;
-        if (/^(?:e[abcd]x|e[sd]i|r(?:8|9|1[0-5])d|w\d+)$/u.test(clean)) return 4;
-        if (/^(?:r[abcd]x|r[sd]i|r(?:8|9|1[0-5])|x\d+)$/u.test(clean)) return 8;
+        if (/^(?:[abcd]l|[sd]il|r(?:8|9|1[0-5])b|b\d+)$/u.test(clean)) return 1;
+        if (/^(?:[abcd]x|[sd]i|r(?:8|9|1[0-5])w|h\d+)$/u.test(clean)) return 2;
+        if (/^(?:e[abcd]x|e[sd]i|r(?:8|9|1[0-5])d|w\d+|s\d+)$/u.test(clean)) return 4;
+        if (/^(?:r[abcd]x|r[sd]i|r(?:8|9|1[0-5])|x\d+|d\d+)$/u.test(clean)) return 8;
+        if (/^q\d+$/u.test(clean)) return 16;
       }
       return 8;
     };
@@ -2351,7 +2456,9 @@ class ZeroInstallSession {
     for (const ins of proc.instructions) {
       const m = ins.mnemonic.toLowerCase();
       const isAddressOnly = m.startsWith("lea");
-      const isArmStore = m.startsWith("str") || m.startsWith("stur");
+      const isArmStore =
+        m.startsWith("str") || m.startsWith("stur") || m.startsWith("stp");
+      const isArmPair = m === "ldp" || m === "stp";
       const size = inferSize(m, ins.rawText, ins.operands);
 
       for (let idx = 0; idx < ins.operands.length; idx++) {
@@ -2413,10 +2520,14 @@ class ZeroInstallSession {
                   !m.startsWith("cmp") &&
                   !m.startsWith("test") &&
                   !m.startsWith("ldr") &&
-                  !m.startsWith("ldur"))
+                  !m.startsWith("ldur") &&
+                  !m.startsWith("ldp"))
               ? "write"
               : "read";
           recordAccess(reg, offset, size, mode);
+          if (isArmPair && size > 0) {
+            recordAccess(reg, offset + size, size, mode);
+          }
         }
       }
     }
@@ -2833,6 +2944,7 @@ async function buildBinaryAnalysisModel(
     architecture: parsedFormat.architecture,
     segments: parsedFormat.segments,
     symbolsByAddr: parsedFormat.symbolsByAddr,
+    gotSlotByAddr: parsedFormat.gotSlotByAddr,
     rttiAnnotationsByAddr,
     proceduresByAddr,
     sortedProcedures,
@@ -2927,6 +3039,7 @@ interface MutableContainerParse {
   architecture: string;
   segments: ParsedSegment[];
   symbolsByAddr: Map<bigint, ParsedSymbol>;
+  gotSlotByAddr: Map<bigint, GotSlotBinding>;
   instructionsByAddr: Map<bigint, DecodedInsn>;
   functionStartHints: Set<bigint>;
 }
@@ -2964,9 +3077,98 @@ function parseBinaryContainers(
     architecture: target.architecture ?? "x86_64",
     segments: [],
     symbolsByAddr: new Map(),
+    gotSlotByAddr: new Map(),
     instructionsByAddr: new Map(),
     functionStartHints: new Set([base]),
   };
+}
+
+interface RawElfRelocation {
+  readonly rOffset: bigint;
+  readonly rInfo: bigint;
+  readonly rAddend: bigint;
+}
+
+/**
+ * Unpacks Android Bionic APS2 SLEB128-packed relocation sections
+ * (SHT_ANDROID_REL = 0x60000001 / SHT_ANDROID_RELA = 0x60000002, magic = "APS2").
+ */
+export function decodeAndroidAps2Relocations(
+  secBytes: Uint8Array,
+): RawElfRelocation[] {
+  if (
+    secBytes.length < 4 ||
+    secBytes[0] !== 0x41 || // 'A'
+    secBytes[1] !== 0x50 || // 'P'
+    secBytes[2] !== 0x53 || // 'S'
+    secBytes[3] !== 0x32 // '2'
+  ) {
+    return [];
+  }
+  let pos = 4;
+  const readSleb128 = (): bigint => {
+    let result = 0n;
+    let shift = 0n;
+    let byte = 0;
+    while (pos < secBytes.length) {
+      byte = secBytes[pos++]!;
+      result |= BigInt(byte & 0x7f) << shift;
+      shift += 7n;
+      if ((byte & 0x80) === 0) break;
+    }
+    if (shift < 64n && (byte & 0x40) !== 0) {
+      result |= -1n << shift;
+    }
+    return BigInt.asIntN(64, result);
+  };
+
+  const totalRelocs = Number(readSleb128());
+  if (totalRelocs <= 0 || totalRelocs > 500_000) return [];
+  let rOffset = readSleb128();
+  let rAddend = 0n;
+  const relocs: RawElfRelocation[] = [];
+  let remaining = totalRelocs;
+
+  const GROUPED_BY_INFO = 1n;
+  const GROUPED_BY_OFFSET_DELTA = 2n;
+  const GROUPED_BY_ADDEND = 4n;
+  const GROUP_HAS_ADDEND = 8n;
+
+  while (remaining > 0 && pos < secBytes.length) {
+    const groupSize = Number(readSleb128());
+    if (groupSize <= 0 || groupSize > remaining) break;
+    const flags = readSleb128();
+    const groupedByInfo = (flags & GROUPED_BY_INFO) !== 0n;
+    const groupedByOffsetDelta = (flags & GROUPED_BY_OFFSET_DELTA) !== 0n;
+    const groupedByAddend = (flags & GROUPED_BY_ADDEND) !== 0n;
+    const hasAddend = (flags & GROUP_HAS_ADDEND) !== 0n;
+
+    const offsetDelta = groupedByOffsetDelta ? readSleb128() : 0n;
+    let rInfo = groupedByInfo ? readSleb128() : 0n;
+    if (hasAddend && groupedByAddend) {
+      rAddend += readSleb128();
+    } else if (!hasAddend) {
+      rAddend = 0n;
+    }
+
+    for (let i = 0; i < groupSize; i++) {
+      rOffset += groupedByOffsetDelta ? offsetDelta : readSleb128();
+      if (!groupedByInfo) {
+        rInfo = readSleb128();
+      }
+      if (hasAddend && !groupedByAddend) {
+        rAddend += readSleb128();
+      }
+      relocs.push({
+        rOffset: BigInt.asUintN(64, rOffset),
+        rInfo: BigInt.asUintN(64, rInfo),
+        rAddend,
+      });
+    }
+    remaining -= groupSize;
+  }
+
+  return relocs;
 }
 
 function parseElfContainer(
@@ -2981,6 +3183,10 @@ function parseElfContainer(
     littleEndian ? bytes.readUInt32LE(off) : bytes.readUInt32BE(off);
   const readU64 = (off: number) =>
     littleEndian ? bytes.readBigUInt64LE(off) : bytes.readBigUInt64BE(off);
+  const readI64 = (off: number) =>
+    littleEndian ? bytes.readBigInt64LE(off) : bytes.readBigInt64BE(off);
+  const readI32 = (off: number) =>
+    BigInt(littleEndian ? bytes.readInt32LE(off) : bytes.readInt32BE(off));
 
   const eType = readU16(16);
   const eMachine = readU16(18);
@@ -3154,10 +3360,22 @@ function parseElfContainer(
   }
 
   const symbolsByAddr = new Map<bigint, ParsedSymbol>();
+  const gotSlotByAddr = new Map<bigint, GotSlotBinding>();
   const functionStartHints = new Set<bigint>();
   if (entryPoint > 0n) {
     functionStartHints.add(entryPoint);
   }
+
+  interface IndexedElfSymbol {
+    readonly name: string;
+    readonly value: bigint;
+    readonly size: number;
+    readonly shndx: number;
+    readonly stType: number;
+    readonly isFunc: boolean;
+    readonly isObject: boolean;
+  }
+  const dynSymsByIndex = new Map<number, IndexedElfSymbol>();
 
   for (const sec of rawSections) {
     if (sec.shType !== 2 && sec.shType !== 11) continue; // SYMTAB / DYNSYM
@@ -3176,9 +3394,22 @@ function parseElfContainer(
         is64Bit ? readU64(symOff + 16) : BigInt(readU32(symOff + 8)),
       );
       const name = readCString(strSec.shOffset, strSec.shSize, stName);
-      if (!name || stValue === 0n || name.startsWith(".")) continue;
+      if (!name || name.startsWith(".")) continue;
       const stType = stInfo & 0xf;
-      const isFunc = stType === 2;
+      const isFunc = stType === 2 || stType === 10; // STT_FUNC / STT_GNU_IFUNC
+      const isObject = stType === 1 || stType === 6; // STT_OBJECT / STT_TLS
+      if (sec.shType === 11) {
+        dynSymsByIndex.set(i, {
+          name,
+          value: stValue,
+          size: stSize,
+          shndx: stShndx,
+          stType,
+          isFunc,
+          isObject,
+        });
+      }
+      if (stValue === 0n) continue;
       const isExternal = stShndx === 0;
       symbolsByAddr.set(stValue, {
         address: stValue,
@@ -3193,6 +3424,176 @@ function parseElfContainer(
       });
       if (isFunc) {
         functionStartHints.add(stValue);
+      }
+    }
+  }
+
+  // Helper to read standard SHT_REL (9), SHT_RELA (4), or Android APS2 (0x60000001 / 0x60000002)
+  const extractSectionRelocations = (sec: RawElfSection): RawElfRelocation[] => {
+    if (sec.shOffset <= 0 || sec.shSize <= 0 || sec.shOffset + sec.shSize > bytes.length) {
+      return [];
+    }
+    const secSlice = bytes.subarray(sec.shOffset, sec.shOffset + sec.shSize);
+    if (
+      sec.shType === 0x60000001 ||
+      sec.shType === 0x60000002 ||
+      (secSlice.length >= 4 &&
+        secSlice[0] === 0x41 &&
+        secSlice[1] === 0x50 &&
+        secSlice[2] === 0x53 &&
+        secSlice[3] === 0x32)
+    ) {
+      return decodeAndroidAps2Relocations(secSlice);
+    }
+    if (sec.shType !== 4 && sec.shType !== 9) return [];
+    const hasAddend = sec.shType === 4;
+    const defaultEnt = is64Bit ? (hasAddend ? 24 : 16) : hasAddend ? 12 : 8;
+    const stride = sec.shEntSize > 0 ? sec.shEntSize : defaultEnt;
+    const count = Math.floor(sec.shSize / stride);
+    const out: RawElfRelocation[] = [];
+    for (let i = 0; i < count; i++) {
+      const off = sec.shOffset + i * stride;
+      if (off + stride > bytes.length) break;
+      const rOffset = is64Bit ? readU64(off) : BigInt(readU32(off));
+      const rInfo = is64Bit ? readU64(off + 8) : BigInt(readU32(off + 4));
+      const rAddend = hasAddend
+        ? is64Bit
+          ? readI64(off + 16)
+          : readI32(off + 8)
+        : 0n;
+      out.push({ rOffset, rInfo, rAddend });
+    }
+    return out;
+  };
+
+  const writableRanges = segments.filter((s) => s.writable);
+  const isAddrInWritable = (addr: bigint): boolean =>
+    writableRanges.some((s) => addr >= s.start && addr < s.end);
+  const isSectionWritable = (shndx: number): boolean => {
+    const sec = rawSections[shndx];
+    return sec !== undefined && (sec.shFlags & 0x1n) !== 0n;
+  };
+
+  // Pre-scan .plt section on AArch64 / x86_64 to map .got.plt target -> .plt stub address
+  const pltSec = rawSections.find(
+    (s) => s.name === ".plt" && s.shAddr > 0n && s.shSize >= 16,
+  );
+  const gotToPltStubAddr = new Map<bigint, bigint>();
+  if (pltSec !== undefined && pltSec.shOffset + pltSec.shSize <= bytes.length) {
+    if (arch === "arm64") {
+      // Scan AArch64 .plt for `adrp x16, #page` + `ldr x17, [x16, #off]`
+      for (let off = 0; off + 12 <= pltSec.shSize; off += 4) {
+        const w0 = readU32(pltSec.shOffset + off);
+        const w1 = readU32(pltSec.shOffset + off + 4);
+        if ((w0 & 0x9f00001f) === 0x90000010 && (w1 & 0xffc003ff) === 0xf9400211) {
+          const stubVaddr = pltSec.shAddr + BigInt(off);
+          const immlo = (w0 >>> 29) & 3;
+          const immhi = (w0 >>> 5) & 0x7ffff;
+          const imm21 = ((immhi << 2) | immlo) << 11 >> 11;
+          const page = (stubVaddr & ~0xfffn) + (BigInt(imm21) << 12n);
+          const imm12 = ((w1 >>> 10) & 0xfff) * 8;
+          const gotAddr = page + BigInt(imm12);
+          gotToPltStubAddr.set(gotAddr, stubVaddr);
+        }
+      }
+    }
+  }
+
+  for (const sec of rawSections) {
+    const isPltRel =
+      sec.name === ".rela.plt" ||
+      sec.name === ".rel.plt" ||
+      sec.name === ".plt.got";
+    const isDynRel =
+      isPltRel ||
+      sec.name.startsWith(".rela.") ||
+      sec.name.startsWith(".rel.") ||
+      sec.shType === 4 ||
+      sec.shType === 9 ||
+      sec.shType === 0x60000001 ||
+      sec.shType === 0x60000002;
+    if (!isDynRel) continue;
+
+    const relocs = extractSectionRelocations(sec);
+    for (let idx = 0; idx < relocs.length; idx++) {
+      const rel = relocs[idx]!;
+      const rSym = is64Bit
+        ? Number(rel.rInfo >> 32n)
+        : Number(rel.rInfo >> 8n);
+      const rType = is64Bit
+        ? Number(rel.rInfo & 0xffffffffn)
+        : Number(rel.rInfo & 0xffn);
+      if (rSym <= 0) continue;
+      const sym = dynSymsByIndex.get(rSym);
+      if (sym === undefined) continue;
+
+      if (isPltRel || rType === 1026 || rType === 7) {
+        // R_AARCH64_JUMP_SLOT (1026) / R_X86_64_JUMP_SLOT (7)
+        let pltStubAddr = gotToPltStubAddr.get(rel.rOffset);
+        if (pltStubAddr === undefined && pltSec !== undefined) {
+          const pltHeaderSize = arch === "arm64" ? 32 : 16;
+          const stubCandidate =
+            pltSec.shAddr + BigInt(pltHeaderSize + idx * 16);
+          if (stubCandidate < pltSec.shAddr + BigInt(pltSec.shSize)) {
+            pltStubAddr = stubCandidate;
+          }
+        }
+        const resolvedTarget = sym.value > 0n ? sym.value : null;
+        if (pltStubAddr !== undefined) {
+          functionStartHints.add(pltStubAddr);
+          symbolsByAddr.set(pltStubAddr, {
+            address: pltStubAddr,
+            name: sym.value > 0n ? `${sym.name}@plt` : sym.name,
+            size: 16,
+            isFunction: true,
+            external: sym.value === 0n,
+            dynamic: true,
+            thunk: true,
+            thunkTarget: resolvedTarget,
+            source: "imported",
+          });
+        }
+        gotSlotByAddr.set(rel.rOffset, {
+          gotAddress: rel.rOffset,
+          symbolName: sym.name,
+          targetAddress: resolvedTarget ?? rel.rOffset,
+          isWritableGlobal: false,
+          isFunction: true,
+        });
+      } else {
+        // Global data / GOT relocation (e.g., R_AARCH64_GLOB_DAT = 1025, R_X86_64_GLOB_DAT = 6, R_AARCH64_ABS64 = 257)
+        const targetAddr =
+          sym.value > 0n ? sym.value + rel.rAddend : rel.rOffset;
+        const isWritable =
+          !sym.isFunc &&
+          (sym.isObject ||
+            sym.shndx === 0 ||
+            isSectionWritable(sym.shndx) ||
+            isAddrInWritable(targetAddr));
+        const binding: GotSlotBinding = {
+          gotAddress: rel.rOffset,
+          symbolName: sym.name,
+          targetAddress: targetAddr,
+          isWritableGlobal: isWritable,
+          isFunction: sym.isFunc,
+        };
+        gotSlotByAddr.set(rel.rOffset, binding);
+        if (targetAddr !== rel.rOffset) {
+          gotSlotByAddr.set(targetAddr, binding);
+        }
+        if (!symbolsByAddr.has(rel.rOffset)) {
+          symbolsByAddr.set(rel.rOffset, {
+            address: rel.rOffset,
+            name: sym.name,
+            size: sym.size || (is64Bit ? 8 : 4),
+            isFunction: sym.isFunc,
+            external: sym.shndx === 0,
+            dynamic: true,
+            thunk: false,
+            thunkTarget: sym.value > 0n ? sym.value : null,
+            source: "imported",
+          });
+        }
       }
     }
   }
@@ -3213,6 +3614,7 @@ function parseElfContainer(
     architecture: arch,
     segments,
     symbolsByAddr,
+    gotSlotByAddr,
     instructionsByAddr: new Map(),
     functionStartHints,
   };
@@ -3431,6 +3833,7 @@ function parseMachOContainer(
     architecture: arch,
     segments,
     symbolsByAddr,
+    gotSlotByAddr: new Map(),
     instructionsByAddr: new Map(),
     functionStartHints,
   };
@@ -3453,6 +3856,7 @@ function parsePeContainer(
       architecture: target.architecture ?? "x86_64",
       segments: [],
       symbolsByAddr: new Map(),
+      gotSlotByAddr: new Map(),
       instructionsByAddr: new Map(),
       functionStartHints: new Set(),
     };
@@ -3531,6 +3935,7 @@ function parsePeContainer(
     architecture: arch,
     segments,
     symbolsByAddr: new Map(),
+    gotSlotByAddr: new Map(),
     instructionsByAddr: new Map(),
     functionStartHints,
   };
@@ -3544,7 +3949,11 @@ async function enrichWithHostCliTools(
   logger: Logger,
 ): Promise<void> {
   // 1. Symbol enrichment via nm
-  const nmBin = findExecutableInPath(["nm", "llvm-nm"], environment);
+  const nmCandidates =
+    parsed.architecture === "arm64"
+      ? ["llvm-nm", "aarch64-linux-gnu-nm", "nm"]
+      : ["nm", "llvm-nm"];
+  const nmBin = findExecutableInPath(nmCandidates, environment);
   if (nmBin !== null) {
     try {
       const { stdout } = await execFileAsync(nmBin, ["-n", targetPath], {
@@ -3605,10 +4014,17 @@ async function enrichWithHostCliTools(
     }
   }
 
-  const objdumpBin = findExecutableInPath(
-    ["objdump", "llvm-objdump", "llvm-objdump.exe", "objdump.exe"],
-    environment,
-  );
+  const objdumpCandidates =
+    parsed.architecture === "arm64"
+      ? [
+          "llvm-objdump",
+          "aarch64-linux-gnu-objdump",
+          "objdump",
+          "llvm-objdump.exe",
+          "objdump.exe",
+        ]
+      : ["objdump", "llvm-objdump", "llvm-objdump.exe", "objdump.exe"];
+  const objdumpBin = findExecutableInPath(objdumpCandidates, environment);
   if (objdumpBin !== null) {
     try {
       const args =
@@ -3779,13 +4195,793 @@ function classifyInstruction(
   };
 }
 
+const AARCH64_COND_CODES: readonly string[] = [
+  "eq",
+  "ne",
+  "cs",
+  "cc",
+  "mi",
+  "pl",
+  "vs",
+  "vc",
+  "hi",
+  "ls",
+  "ge",
+  "lt",
+  "gt",
+  "le",
+  "al",
+  "nv",
+];
+
+function formatAArch64Gpr(reg: number, is64: boolean, allowSp: boolean): string {
+  if (reg === 31) {
+    return allowSp ? (is64 ? "sp" : "wsp") : is64 ? "xzr" : "wzr";
+  }
+  return `${is64 ? "x" : "w"}${reg}`;
+}
+
+function signExtend32(val: number, bits: number): number {
+  const shift = 32 - bits;
+  return (val << shift) >> shift;
+}
+
+function formatSignedHexDisp(disp: number): string {
+  if (disp === 0) return "#0x0";
+  return disp < 0
+    ? `#-0x${Math.abs(disp).toString(16)}`
+    : `#0x${disp.toString(16)}`;
+}
+
+function decodeAArch64Instruction(
+  word: number,
+  vaddr: bigint,
+  parsed: MutableContainerParse,
+): {
+  readonly mnem: string;
+  readonly ops: string[];
+  readonly targetAddress: bigint | null;
+} {
+  if (word === 0xd503201f) {
+    return { mnem: "nop", ops: [], targetAddress: null };
+  }
+  if ((word & 0xffffe0ff) === 0xd503201f) {
+    return { mnem: "hint", ops: [`#0x${((word >>> 5) & 0x7f).toString(16)}`], targetAddress: null };
+  }
+
+  // 1. Unconditional B / BL: 000101 / 100101 imm26
+  if ((word & 0x7c000000) === 0x14000000) {
+    const isBl = (word & 0x80000000) !== 0;
+    const imm26 = signExtend32(word & 0x03ffffff, 26);
+    const target = vaddr + BigInt(imm26) * 4n;
+    if (isBl) {
+      parsed.functionStartHints.add(target);
+    }
+    const sym = parsed.symbolsByAddr.get(target);
+    const label = sym !== undefined ? `${toHex(target)} <${sym.name}>` : toHex(target);
+    return { mnem: isBl ? "bl" : "b", ops: [label], targetAddress: target };
+  }
+
+  // 2. Conditional branch B.cond: 01010100 imm19 0 cond
+  if ((word & 0xff000010) === 0x54000000) {
+    const imm19 = signExtend32((word >>> 5) & 0x7ffff, 19);
+    const cond = AARCH64_COND_CODES[word & 0xf] ?? "al";
+    const target = vaddr + BigInt(imm19) * 4n;
+    return { mnem: `b.${cond}`, ops: [toHex(target)], targetAddress: target };
+  }
+
+  // 3. CBZ / CBNZ: sf 011010 op imm19 Rt
+  if ((word & 0x7e000000) === 0x34000000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const isNz = (word & 0x01000000) !== 0;
+    const imm19 = signExtend32((word >>> 5) & 0x7ffff, 19);
+    const rt = formatAArch64Gpr(word & 0x1f, is64, false);
+    const target = vaddr + BigInt(imm19) * 4n;
+    return {
+      mnem: isNz ? "cbnz" : "cbz",
+      ops: [rt, toHex(target)],
+      targetAddress: target,
+    };
+  }
+
+  // 4. TBZ / TBNZ: b5 011011 op b40 imm14 Rt
+  if ((word & 0x7e000000) === 0x36000000) {
+    const b5 = (word >>> 31) & 1;
+    const isNz = (word & 0x01000000) !== 0;
+    const b40 = (word >>> 19) & 0x1f;
+    const bitNum = (b5 << 5) | b40;
+    const imm14 = signExtend32((word >>> 5) & 0x3fff, 14);
+    const rt = formatAArch64Gpr(word & 0x1f, b5 === 1, false);
+    const target = vaddr + BigInt(imm14) * 4n;
+    return {
+      mnem: isNz ? "tbnz" : "tbz",
+      ops: [rt, `#${bitNum}`, toHex(target)],
+      targetAddress: target,
+    };
+  }
+
+  // 5. Unconditional branch register: BR / BLR / RET
+  if ((word & 0xfe1ffc1f) === 0xd61f0000) {
+    const opc = (word >>> 21) & 0xf;
+    const rn = (word >>> 5) & 0x1f;
+    if (opc === 2) {
+      return {
+        mnem: "ret",
+        ops: rn === 30 ? [] : [formatAArch64Gpr(rn, true, false)],
+        targetAddress: null,
+      };
+    }
+    if (opc === 1) {
+      return {
+        mnem: "blr",
+        ops: [formatAArch64Gpr(rn, true, false)],
+        targetAddress: null,
+      };
+    }
+    if (opc === 0) {
+      return {
+        mnem: "br",
+        ops: [formatAArch64Gpr(rn, true, false)],
+        targetAddress: null,
+      };
+    }
+  }
+
+  // 6. ADR / ADRP: op immlo 10000 immhi Rd
+  if ((word & 0x1f000000) === 0x10000000) {
+    const isAdrp = (word & 0x80000000) !== 0;
+    const immlo = (word >>> 29) & 3;
+    const immhi = (word >>> 5) & 0x7ffff;
+    const imm21 = signExtend32((immhi << 2) | immlo, 21);
+    const rd = formatAArch64Gpr(word & 0x1f, true, false);
+    const target = isAdrp
+      ? (vaddr & ~0xfffn) + BigInt(imm21) * 4096n
+      : vaddr + BigInt(imm21);
+    return {
+      mnem: isAdrp ? "adrp" : "adr",
+      ops: [rd, toHex(target)],
+      targetAddress: target,
+    };
+  }
+
+  // 7. Move wide immediate: MOVN / MOVZ / MOVK
+  if ((word & 0x1f800000) === 0x12800000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const opc = (word >>> 29) & 3;
+    const hw = (word >>> 21) & 3;
+    const imm16 = (word >>> 5) & 0xffff;
+    const rd = formatAArch64Gpr(word & 0x1f, is64, false);
+    const mnem = opc === 0 ? "movn" : opc === 2 ? "movz" : opc === 3 ? "movk" : "mov";
+    const shiftPart = hw > 0 ? `, lsl #${hw * 16}` : "";
+    return {
+      mnem,
+      ops: [rd, `#0x${imm16.toString(16)}${shiftPart}`],
+      targetAddress: null,
+    };
+  }
+
+  // 8. Add/subtract immediate: sf op S 100010 sh imm12 Rn Rd
+  if ((word & 0x1f000000) === 0x11000000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const isSub = (word & 0x40000000) !== 0;
+    const isS = (word & 0x20000000) !== 0;
+    const sh = (word >>> 22) & 1;
+    const imm12 = (word >>> 10) & 0xfff;
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    const val = sh === 1 ? imm12 << 12 : imm12;
+    if (isSub && isS && rd === 31) {
+      return {
+        mnem: "cmp",
+        ops: [formatAArch64Gpr(rn, is64, true), `#0x${val.toString(16)}`],
+        targetAddress: null,
+      };
+    }
+    if (!isSub && !isS && imm12 === 0 && (rn === 31 || rd === 31)) {
+      return {
+        mnem: "mov",
+        ops: [
+          formatAArch64Gpr(rd, is64, true),
+          formatAArch64Gpr(rn, is64, true),
+        ],
+        targetAddress: null,
+      };
+    }
+    const mnem = `${isSub ? "sub" : "add"}${isS ? "s" : ""}`;
+    return {
+      mnem,
+      ops: [
+        formatAArch64Gpr(rd, is64, !isS),
+        formatAArch64Gpr(rn, is64, true),
+        `#0x${val.toString(16)}`,
+      ],
+      targetAddress: null,
+    };
+  }
+
+  // 9. Bitfield: SBFM / BFM / UBFM (SXTW, LSL, LSR, ASR)
+  if ((word & 0x1f800000) === 0x13000000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const opc = (word >>> 29) & 3;
+    const immr = (word >>> 16) & 0x3f;
+    const imms = (word >>> 10) & 0x3f;
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    const rdName = formatAArch64Gpr(rd, is64, false);
+    const rnName = formatAArch64Gpr(rn, is64, false);
+    if (opc === 0 && is64 && immr === 0 && imms === 31) {
+      return {
+        mnem: "sxtw",
+        ops: [rdName, formatAArch64Gpr(rn, false, false)],
+        targetAddress: null,
+      };
+    }
+    if (opc === 2 && ((is64 && imms === 63) || (!is64 && imms === 31))) {
+      return {
+        mnem: "lsr",
+        ops: [rdName, rnName, `#${immr}`],
+        targetAddress: null,
+      };
+    }
+    if (opc === 0 && ((is64 && imms === 63) || (!is64 && imms === 31))) {
+      return {
+        mnem: "asr",
+        ops: [rdName, rnName, `#${immr}`],
+        targetAddress: null,
+      };
+    }
+    if (opc === 2 && imms + 1 === immr) {
+      const width = is64 ? 64 : 32;
+      return {
+        mnem: "lsl",
+        ops: [rdName, rnName, `#${(width - immr) % width}`],
+        targetAddress: null,
+      };
+    }
+    const mnem = opc === 0 ? "sbfm" : opc === 1 ? "bfm" : "ubfm";
+    return {
+      mnem,
+      ops: [rdName, rnName, `#${immr}`, `#${imms}`],
+      targetAddress: null,
+    };
+  }
+
+  // 10. Load/Store Pair (LDP / STP): opc 101 V 0xx L imm7 Rt2 Rn Rt
+  if ((word & 0x3a000000) === 0x28000000) {
+    const opc = (word >>> 30) & 3;
+    const isSimd = (word & 0x04000000) !== 0;
+    const mode = (word >>> 23) & 3;
+    const isLoad = (word & 0x00400000) !== 0;
+    const imm7 = signExtend32((word >>> 15) & 0x7f, 7);
+    const rt2 = (word >>> 10) & 0x1f;
+    const rn = (word >>> 5) & 0x1f;
+    const rt = word & 0x1f;
+    const scale = isSimd ? 4 << opc : opc === 2 ? 8 : 4;
+    const disp = imm7 * scale;
+    const regPrefix = isSimd
+      ? opc === 0
+        ? "s"
+        : opc === 1
+          ? "d"
+          : "q"
+      : opc === 2
+        ? "x"
+        : "w";
+    const rtName = isSimd
+      ? `${regPrefix}${rt}`
+      : formatAArch64Gpr(rt, opc === 2, false);
+    const rt2Name = isSimd
+      ? `${regPrefix}${rt2}`
+      : formatAArch64Gpr(rt2, opc === 2, false);
+    const rnName = formatAArch64Gpr(rn, true, true);
+    const mnem = isLoad ? (opc === 1 && !isSimd ? "ldpsw" : "ldp") : "stp";
+    // Prologue hint: stp x29, x30, [sp, #-...]
+    if (!isLoad && rn === 31 && rt === 29 && rt2 === 30) {
+      parsed.functionStartHints.add(vaddr);
+    }
+    const memOp =
+      mode === 1
+        ? `[${rnName}], ${formatSignedHexDisp(disp)}`
+        : mode === 3
+          ? `[${rnName}, ${formatSignedHexDisp(disp)}]!`
+          : disp === 0
+            ? `[${rnName}]`
+            : `[${rnName}, ${formatSignedHexDisp(disp)}]`;
+    return { mnem, ops: [rtName, rt2Name, memOp], targetAddress: null };
+  }
+
+  // 11. Load/Store Unsigned Immediate: size 111 V 01 opc imm12 Rn Rt
+  if ((word & 0x3b000000) === 0x39000000) {
+    const size = (word >>> 30) & 3;
+    const isSimd = (word & 0x04000000) !== 0;
+    const opc = (word >>> 22) & 3;
+    const imm12 = (word >>> 10) & 0xfff;
+    const rn = (word >>> 5) & 0x1f;
+    const rt = word & 0x1f;
+    const rnName = formatAArch64Gpr(rn, true, true);
+    let mnem = "ldr";
+    let rtName = formatAArch64Gpr(rt, size === 3, false);
+    let scaleShift = size;
+    if (isSimd) {
+      const is128 = size === 0 && (opc & 2) !== 0;
+      scaleShift = is128 ? 4 : size;
+      const isLoad = (opc & 1) !== 0;
+      mnem = isLoad ? "ldr" : "str";
+      const pref = is128
+        ? "q"
+        : size === 0
+          ? "b"
+          : size === 1
+            ? "h"
+            : size === 2
+              ? "s"
+              : "d";
+      rtName = `${pref}${rt}`;
+    } else {
+      if (opc === 0) {
+        mnem = size === 0 ? "strb" : size === 1 ? "strh" : "str";
+      } else if (opc === 1) {
+        mnem = size === 0 ? "ldrb" : size === 1 ? "ldrh" : "ldr";
+      } else {
+        const is64Target = opc === 2;
+        rtName = formatAArch64Gpr(rt, is64Target, false);
+        mnem = size === 0 ? "ldrsb" : size === 1 ? "ldrsh" : "ldrsw";
+      }
+    }
+    const disp = imm12 * (1 << scaleShift);
+    const memOp =
+      disp === 0 ? `[${rnName}]` : `[${rnName}, #0x${disp.toString(16)}]`;
+    return { mnem, ops: [rtName, memOp], targetAddress: null };
+  }
+
+  // 12. Load/Store Register Offset & Unscaled/Pre/Post Immediate: size 111 V 00 opc ...
+  if ((word & 0x3b000000) === 0x38000000) {
+    const size = (word >>> 30) & 3;
+    const isSimd = (word & 0x04000000) !== 0;
+    const opc = (word >>> 22) & 3;
+    const rn = (word >>> 5) & 0x1f;
+    const rt = word & 0x1f;
+    const rnName = formatAArch64Gpr(rn, true, true);
+    const isLoad = (opc & 1) !== 0 || opc >= 2;
+    const rtName = isSimd
+      ? `${size === 2 ? "s" : size === 3 ? "d" : "q"}${rt}`
+      : formatAArch64Gpr(rt, size === 3 || opc === 2, false);
+    if ((word & 0x00200800) === 0x00200800) {
+      // Register offset: [Xn, Xm/Wm, extend #amount]
+      const rm = (word >>> 16) & 0x1f;
+      const option = (word >>> 13) & 7;
+      const rmIs64 = (option & 3) === 3;
+      const rmName = formatAArch64Gpr(rm, rmIs64, false);
+      const mnem = isLoad
+        ? size === 0
+          ? "ldrb"
+          : size === 1
+            ? "ldrh"
+            : opc === 2 && size === 2
+              ? "ldrsw"
+              : "ldr"
+        : size === 0
+          ? "strb"
+          : size === 1
+            ? "strh"
+            : "str";
+      return {
+        mnem,
+        ops: [rtName, `[${rnName}, ${rmName}]`],
+        targetAddress: null,
+      };
+    }
+    const mode = (word >>> 10) & 3;
+    const imm9 = signExtend32((word >>> 12) & 0x1ff, 9);
+    const mnem =
+      mode === 0
+        ? isLoad
+          ? size === 0
+            ? "ldurb"
+            : size === 1
+              ? "ldurh"
+              : "ldur"
+          : size === 0
+            ? "sturb"
+            : size === 1
+              ? "sturh"
+              : "stur"
+        : isLoad
+          ? size === 0
+            ? "ldrb"
+            : size === 1
+              ? "ldrh"
+              : "ldr"
+          : size === 0
+            ? "strb"
+            : size === 1
+              ? "strh"
+              : "str";
+    const memOp =
+      mode === 1
+        ? `[${rnName}], ${formatSignedHexDisp(imm9)}`
+        : mode === 3
+          ? `[${rnName}, ${formatSignedHexDisp(imm9)}]!`
+          : imm9 === 0
+            ? `[${rnName}]`
+            : `[${rnName}, ${formatSignedHexDisp(imm9)}]`;
+    return { mnem, ops: [rtName, memOp], targetAddress: null };
+  }
+
+  // 13. Add/Subtract Shifted or Extended Register: sf op S 01011 ...
+  if ((word & 0x1f000000) === 0x0b000000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const isSub = (word & 0x40000000) !== 0;
+    const isS = (word & 0x20000000) !== 0;
+    const rm = (word >>> 16) & 0x1f;
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    if (isSub && isS && rd === 31) {
+      return {
+        mnem: "cmp",
+        ops: [
+          formatAArch64Gpr(rn, is64, true),
+          formatAArch64Gpr(rm, is64, false),
+        ],
+        targetAddress: null,
+      };
+    }
+    if (isSub && !isS && rn === 31) {
+      return {
+        mnem: "neg",
+        ops: [
+          formatAArch64Gpr(rd, is64, false),
+          formatAArch64Gpr(rm, is64, false),
+        ],
+        targetAddress: null,
+      };
+    }
+    return {
+      mnem: `${isSub ? "sub" : "add"}${isS ? "s" : ""}`,
+      ops: [
+        formatAArch64Gpr(rd, is64, !isS),
+        formatAArch64Gpr(rn, is64, true),
+        formatAArch64Gpr(rm, is64, false),
+      ],
+      targetAddress: null,
+    };
+  }
+
+  // 14. Logical Shifted Register (AND / ORR / EOR / MOV): sf opc 01010 ...
+  if ((word & 0x1f000000) === 0x0a000000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const opc = (word >>> 29) & 3;
+    const nBit = (word >>> 21) & 1;
+    const rm = (word >>> 16) & 0x1f;
+    const imm6 = (word >>> 10) & 0x3f;
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    if (opc === 1 && nBit === 0 && rn === 31 && imm6 === 0) {
+      return {
+        mnem: "mov",
+        ops: [
+          formatAArch64Gpr(rd, is64, false),
+          formatAArch64Gpr(rm, is64, false),
+        ],
+        targetAddress: null,
+      };
+    }
+    if (opc === 3 && nBit === 0 && rd === 31) {
+      return {
+        mnem: "tst",
+        ops: [
+          formatAArch64Gpr(rn, is64, false),
+          formatAArch64Gpr(rm, is64, false),
+        ],
+        targetAddress: null,
+      };
+    }
+    const mnem =
+      opc === 0 ? "and" : opc === 1 ? "orr" : opc === 2 ? "eor" : "ands";
+    return {
+      mnem,
+      ops: [
+        formatAArch64Gpr(rd, is64, false),
+        formatAArch64Gpr(rn, is64, false),
+        formatAArch64Gpr(rm, is64, false),
+      ],
+      targetAddress: null,
+    };
+  }
+
+  // 14b. Conditional Select (CSEL / CSINC / CSINV / CSNEG): sf op 0 11010100 Rm cond 0 o2 Rn Rd
+  if ((word & 0x1fe00800) === 0x1a800000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const op = (word >>> 30) & 1;
+    const o2 = (word >>> 10) & 1;
+    const rm = (word >>> 16) & 0x1f;
+    const cond = AARCH64_COND_CODES[(word >>> 12) & 0xf] ?? "al";
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    const mnem =
+      op === 0
+        ? o2 === 0
+          ? "csel"
+          : "csinc"
+        : o2 === 0
+          ? "csinv"
+          : "csneg";
+    return {
+      mnem,
+      ops: [
+        formatAArch64Gpr(rd, is64, false),
+        formatAArch64Gpr(rn, is64, false),
+        formatAArch64Gpr(rm, is64, false),
+        cond,
+      ],
+      targetAddress: null,
+    };
+  }
+
+  // 15. Data-processing (3-source): MADD / MSUB / MUL / SMADDL / UMADDL
+  if ((word & 0x1f000000) === 0x1b000000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const op31 = (word >>> 21) & 7;
+    const o0 = (word >>> 15) & 1;
+    const rm = (word >>> 16) & 0x1f;
+    const ra = (word >>> 10) & 0x1f;
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    if (op31 === 1 || op31 === 5) {
+      // SMADDL / SMSUBL / UMADDL / UMSUBL (64-bit dest, 32-bit sources)
+      const isUnsigned = op31 === 5;
+      const mnem = isUnsigned
+        ? o0 === 1
+          ? "umsubl"
+          : "umaddl"
+        : o0 === 1
+          ? "smsubl"
+          : "smaddl";
+      return {
+        mnem,
+        ops: [
+          formatAArch64Gpr(rd, true, false),
+          formatAArch64Gpr(rn, false, false),
+          formatAArch64Gpr(rm, false, false),
+          formatAArch64Gpr(ra, true, false),
+        ],
+        targetAddress: null,
+      };
+    }
+    const rdName = formatAArch64Gpr(rd, is64, false);
+    const rnName = formatAArch64Gpr(rn, is64, false);
+    const rmName = formatAArch64Gpr(rm, is64, false);
+    const raName = formatAArch64Gpr(ra, is64, false);
+    if (o0 === 0 && ra === 31) {
+      return { mnem: "mul", ops: [rdName, rnName, rmName], targetAddress: null };
+    }
+    return {
+      mnem: o0 === 1 ? "msub" : "madd",
+      ops: [rdName, rnName, rmName, raName],
+      targetAddress: null,
+    };
+  }
+
+  // 16. Data-processing (2-source): UDIV / SDIV / LSLV / LSRV / ASRV
+  if ((word & 0x5fe00000) === 0x1ac00000) {
+    const is64 = (word & 0x80000000) !== 0;
+    const opcode = (word >>> 10) & 0x3f;
+    const rm = (word >>> 16) & 0x1f;
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    const mnem =
+      opcode === 2
+        ? "udiv"
+        : opcode === 3
+          ? "sdiv"
+          : opcode === 8
+            ? "lsl"
+            : opcode === 9
+              ? "lsr"
+              : opcode === 10
+                ? "asr"
+                : "dp2";
+    return {
+      mnem,
+      ops: [
+        formatAArch64Gpr(rd, is64, false),
+        formatAArch64Gpr(rn, is64, false),
+        formatAArch64Gpr(rm, is64, false),
+      ],
+      targetAddress: null,
+    };
+  }
+
+  // 17. Scalar Floating-Point & Conversion: FMOV, FADD, FSUB, FMUL, FDIV, FCMP, FCVT, SCVTF, FCVTZS
+  if ((word & 0x5f000000) === 0x1e000000) {
+    const ftype = (word >>> 22) & 3;
+    const fpPrefix = ftype === 1 ? "d" : "s";
+    const rn = (word >>> 5) & 0x1f;
+    const rd = word & 0x1f;
+    const rm = (word >>> 16) & 0x1f;
+
+    // Int <-> Float conversions (SCVTF, UCVTF, FCVTZS, FCVTZU, FMOV gpr<->fpr)
+    if ((word & 0x5f20fc00) === 0x1e200000 && ((word >>> 21) & 1) === 1) {
+      const is64Int = (word & 0x80000000) !== 0;
+      const rmode = (word >>> 19) & 3;
+      const opcode = (word >>> 16) & 7;
+      if (rmode === 0 && opcode === 2) {
+        return {
+          mnem: "scvtf",
+          ops: [
+            `${fpPrefix}${rd}`,
+            formatAArch64Gpr(rn, is64Int, false),
+          ],
+          targetAddress: null,
+        };
+      }
+      if (rmode === 0 && opcode === 3) {
+        return {
+          mnem: "ucvtf",
+          ops: [
+            `${fpPrefix}${rd}`,
+            formatAArch64Gpr(rn, is64Int, false),
+          ],
+          targetAddress: null,
+        };
+      }
+      if (rmode === 3 && opcode === 0) {
+        return {
+          mnem: "fcvtzs",
+          ops: [
+            formatAArch64Gpr(rd, is64Int, false),
+            `${fpPrefix}${rn}`,
+          ],
+          targetAddress: null,
+        };
+      }
+      if (rmode === 0 && opcode === 7) {
+        return {
+          mnem: "fmov",
+          ops: [
+            `${fpPrefix}${rd}`,
+            formatAArch64Gpr(rn, is64Int, false),
+          ],
+          targetAddress: null,
+        };
+      }
+      if (rmode === 0 && opcode === 6) {
+        return {
+          mnem: "fmov",
+          ops: [
+            formatAArch64Gpr(rd, is64Int, false),
+            `${fpPrefix}${rn}`,
+          ],
+          targetAddress: null,
+        };
+      }
+    }
+
+    // FP 2-source: FMUL / FDIV / FADD / FSUB
+    if ((word & 0xff200c00) === 0x1e200800) {
+      const op = (word >>> 12) & 0xf;
+      const mnem =
+        op === 0
+          ? "fmul"
+          : op === 1
+            ? "fdiv"
+            : op === 2
+              ? "fadd"
+              : op === 3
+                ? "fsub"
+                : "fp2";
+      return {
+        mnem,
+        ops: [`${fpPrefix}${rd}`, `${fpPrefix}${rn}`, `${fpPrefix}${rm}`],
+        targetAddress: null,
+      };
+    }
+
+    // FCSEL: 00011110 ftype 1 Rm cond 11 Rn Rd
+    if ((word & 0xff200c00) === 0x1e200c00) {
+      const cond = AARCH64_COND_CODES[(word >>> 12) & 0xf] ?? "al";
+      return {
+        mnem: "fcsel",
+        ops: [`${fpPrefix}${rd}`, `${fpPrefix}${rn}`, `${fpPrefix}${rm}`, cond],
+        targetAddress: null,
+      };
+    }
+
+    // FCMP
+    if ((word & 0xff20fc10) === 0x1e202000) {
+      const cmpWithZero = (word & 0x8) !== 0;
+      return {
+        mnem: "fcmp",
+        ops: [
+          `${fpPrefix}${rn}`,
+          cmpWithZero ? "#0.0" : `${fpPrefix}${rm}`,
+        ],
+        targetAddress: null,
+      };
+    }
+
+    // FP 1-source: FMOV / FABS / FNEG / FSQRT / FCVT
+    if ((word & 0xff207c00) === 0x1e204000) {
+      const opc = (word >>> 15) & 0x3f;
+      if (opc === 4 || opc === 5) {
+        const dstPrefix = opc === 5 ? "d" : "s";
+        return {
+          mnem: "fcvt",
+          ops: [`${dstPrefix}${rd}`, `${fpPrefix}${rn}`],
+          targetAddress: null,
+        };
+      }
+      const mnem =
+        opc === 0
+          ? "fmov"
+          : opc === 1
+            ? "fabs"
+            : opc === 2
+              ? "fneg"
+              : opc === 3
+                ? "fsqrt"
+                : "fp1";
+      return {
+        mnem,
+        ops: [`${fpPrefix}${rd}`, `${fpPrefix}${rn}`],
+        targetAddress: null,
+      };
+    }
+
+    // FMOV (scalar immediate)
+    if ((word & 0xff201fe0) === 0x1e201000) {
+      const imm8 = (word >>> 13) & 0xff;
+      return {
+        mnem: "fmov",
+        ops: [`${fpPrefix}${rd}`, `#0x${imm8.toString(16)}`],
+        targetAddress: null,
+      };
+    }
+  }
+
+  // 18. Advanced SIMD / NEON DSP ops (UABD, UADDLP, USRA)
+  if ((word & 0xbf20fc00) === 0x2e207400) {
+    const q = (word >>> 30) & 1;
+    const suffix = q === 1 ? "16b" : "8b";
+    return {
+      mnem: "uabd",
+      ops: [
+        `v${word & 0x1f}.${suffix}`,
+        `v${(word >>> 5) & 0x1f}.${suffix}`,
+        `v${(word >>> 16) & 0x1f}.${suffix}`,
+      ],
+      targetAddress: null,
+    };
+  }
+  if ((word & 0xbf3ffc00) === 0x2e202800) {
+    return {
+      mnem: "uaddlp",
+      ops: [`v${word & 0x1f}.8h`, `v${(word >>> 5) & 0x1f}.16b`],
+      targetAddress: null,
+    };
+  }
+  if ((word & 0xbf80fc00) === 0x2f001400) {
+    return {
+      mnem: "usra",
+      ops: [`v${word & 0x1f}.8h`, `v${(word >>> 5) & 0x1f}.8h`, "#8"],
+      targetAddress: null,
+    };
+  }
+
+  return {
+    mnem: "inst",
+    ops: [`0x${word.toString(16)}`],
+    targetAddress: null,
+  };
+}
+
 function decodeExecutableSectionsBuiltin(
   bytes: Buffer,
   parsed: MutableContainerParse,
 ): void {
   for (const seg of parsed.segments) {
     if (!seg.executable || seg.fileSize === 0) continue;
-    const maxBytes = Math.min(seg.fileSize, 256 * 1024);
+    const maxBytes = Math.min(seg.fileSize, 512 * 1024);
     let offset = 0;
     while (offset < maxBytes && seg.fileOffset + offset < bytes.length) {
       const vaddr = seg.start + BigInt(offset);
@@ -3793,38 +4989,24 @@ function decodeExecutableSectionsBuiltin(
       if (parsed.architecture === "arm64" && pos + 4 <= bytes.length) {
         const word = bytes.readUInt32LE(pos);
         const hex = bytes.subarray(pos, pos + 4).toString("hex");
-        let mnem = "inst";
-        let ops: string[] = [`0x${word.toString(16)}`];
-        let target: bigint | null = null;
-        if ((word & 0xfc000000) === 0x94000000) {
-          mnem = "bl";
-          const imm26 = word & 0x03ffffff;
-          const signed = (imm26 & 0x02000000) !== 0 ? imm26 | ~0x03ffffff : imm26;
-          target = vaddr + BigInt(signed * 4);
-          ops = [toHex(target)];
-          parsed.functionStartHints.add(target);
-        } else if (word === 0xd65f03c0) {
-          mnem = "ret";
-          ops = [];
-        } else if ((word & 0xbfc00000) === 0xb9400000 || (word & 0xbfc00000) === 0xb9000000) {
-          const is64 = (word & 0x40000000) !== 0;
-          const isLoad = (word & 0x00400000) !== 0;
-          const imm12 = (word >>> 10) & 0xfff;
-          const rn = (word >>> 5) & 0x1f;
-          const rt = word & 0x1f;
-          const scale = is64 ? 8 : 4;
-          const disp = imm12 * scale;
-          mnem = isLoad ? "ldr" : "str";
-          const rtName = `${is64 ? "x" : "w"}${rt}`;
-          const rnName = rn === 31 ? "sp" : `x${rn}`;
-          ops = [
-            rtName,
-            disp === 0 ? `[${rnName}]` : `[${rnName}, #0x${disp.toString(16)}]`,
-          ];
-        }
+        const { mnem, ops, targetAddress } = decodeAArch64Instruction(
+          word,
+          vaddr,
+          parsed,
+        );
+        const classified = classifyInstruction(
+          vaddr,
+          hex,
+          4,
+          mnem,
+          ops,
+          `${mnem} ${ops.join(", ")}`,
+        );
         parsed.instructionsByAddr.set(
           vaddr,
-          classifyInstruction(vaddr, hex, 4, mnem, ops, `${mnem} ${ops.join(", ")}`),
+          targetAddress !== null && classified.targetAddress === null
+            ? { ...classified, targetAddress }
+            : classified,
         );
         offset += 4;
       } else {
@@ -4095,12 +5277,79 @@ function buildProceduresAndReferences(
         : undefined;
     const procInsns: DecodedInsn[] = [];
     const localDisps = new Set<number>();
+    const adrpPageByReg = new Map<string, bigint>();
     for (const ins of sortedInsns) {
       if (ins.address < start) continue;
       if (nextStart !== undefined && ins.address >= nextStart) break;
       if (symEndLimit !== undefined && ins.address >= symEndLimit) break;
-      procInsns.push(ins);
-      for (const op of ins.operands) {
+
+      let effectiveInsn = ins;
+      const mnemLower = ins.mnemonic.toLowerCase();
+      if (mnemLower === "adrp" && ins.operands.length >= 2 && ins.targetAddress !== null) {
+        adrpPageByReg.set(ins.operands[0]!.toLowerCase(), ins.targetAddress);
+      } else if (
+        (mnemLower.startsWith("ldr") ||
+          mnemLower.startsWith("str") ||
+          mnemLower === "add") &&
+        ins.operands.length >= 2 &&
+        adrpPageByReg.size > 0
+      ) {
+        if (mnemLower.startsWith("ldr") || mnemLower.startsWith("str")) {
+          const memOp = ins.operands[1] ?? "";
+          const mMatch =
+            /^\[([xX]\d+)(?:,\s*#?(0x[0-9a-fA-F]+|\d+))?\]$/u.exec(memOp);
+          if (mMatch !== null) {
+            const baseReg = mMatch[1]!.toLowerCase();
+            const pageBase = adrpPageByReg.get(baseReg);
+            if (pageBase !== undefined) {
+              const rawOff = mMatch[2] ?? "0";
+              const off = rawOff.toLowerCase().startsWith("0x")
+                ? BigInt(rawOff)
+                : BigInt(Number.parseInt(rawOff, 10));
+              const resolvedAddr = pageBase + off;
+              effectiveInsn = { ...ins, targetAddress: resolvedAddr };
+              if (
+                mnemLower.startsWith("ldr") &&
+                ins.operands[0]?.toLowerCase() === baseReg
+              ) {
+                // If loading a pointer from .got into baseReg, propagate any bound global symbol address
+                const gotSlot = parsed.gotSlotByAddr.get(resolvedAddr);
+                if (gotSlot !== undefined && gotSlot.symbolValue > 0n) {
+                  adrpPageByReg.set(baseReg, gotSlot.symbolValue);
+                } else {
+                  adrpPageByReg.delete(baseReg);
+                }
+              }
+            }
+          }
+        } else if (mnemLower === "add" && ins.operands.length >= 3) {
+          const dstReg = ins.operands[0]!.toLowerCase();
+          const srcReg = ins.operands[1]!.toLowerCase();
+          const rawImm = ins.operands[2]!.replace(/^#/u, "");
+          const pageBase = adrpPageByReg.get(srcReg);
+          if (
+            pageBase !== undefined &&
+            /^(?:0x[0-9a-fA-F]+|\d+)$/u.test(rawImm)
+          ) {
+            const off = rawImm.toLowerCase().startsWith("0x")
+              ? BigInt(rawImm)
+              : BigInt(Number.parseInt(rawImm, 10));
+            const resolvedAddr = pageBase + off;
+            effectiveInsn = { ...ins, targetAddress: resolvedAddr };
+            if (dstReg === srcReg) {
+              adrpPageByReg.delete(dstReg);
+            }
+          }
+        }
+      } else if (ins.isCall) {
+        // Caller-saved x0..x18 clobbered across calls
+        for (let r = 0; r <= 18; r++) {
+          adrpPageByReg.delete(`x${r}`);
+        }
+      }
+
+      procInsns.push(effectiveInsn);
+      for (const op of effectiveInsn.operands) {
         const dispMatch = /\[(?:rbp|ebp|sp)\s*([+-]\s*0x[0-9a-fA-F]+)\]/u.exec(
           op,
         );
@@ -4111,7 +5360,7 @@ function buildProceduresAndReferences(
           }
         }
       }
-      if (ins.isReturn && (sym === undefined || sym.size === 0)) {
+      if (effectiveInsn.isReturn && (sym === undefined || sym.size === 0)) {
         break;
       }
     }
@@ -4173,7 +5422,12 @@ function buildProceduresAndReferences(
     for (const ins of proc.instructions) {
       if (ins.targetAddress === null) continue;
       const target = ins.targetAddress;
-      const isData = !ins.isCall && !ins.isJump && (stringAddrs.has(target) || parsed.symbolsByAddr.has(target));
+      const isData =
+        !ins.isCall &&
+        !ins.isJump &&
+        (stringAddrs.has(target) ||
+          parsed.symbolsByAddr.has(target) ||
+          parsed.gotSlotByAddr.has(target));
       if (!ins.isCall && !ins.isJump && !isData) continue;
       const calleeProc = proceduresByAddr.get(target);
       const isCrossProcJump =
@@ -4200,6 +5454,17 @@ function buildProceduresAndReferences(
       if (isEffectiveCall && calleeProc !== undefined) {
         proc.callees.add(target);
         calleeProc.callers.add(proc.address);
+        // If calling a .plt thunk whose real intra-library implementation exists, link directly!
+        if (calleeProc.thunk && calleeProc.thunkTarget !== null) {
+          const realTargetAddr = calleeProc.thunkTarget;
+          const realTargetProc = proceduresByAddr.get(realTargetAddr);
+          if (realTargetProc !== undefined) {
+            proc.callees.add(realTargetAddr);
+            realTargetProc.callers.add(proc.address);
+            calleeProc.callees.add(realTargetAddr);
+            realTargetProc.callers.add(calleeProc.address);
+          }
+        }
       }
     }
   }

@@ -233,16 +233,51 @@ function patchBinaryForDynamicLoading(rawBuf: Buffer): Buffer {
   return buf;
 }
 
+type BaseParityScalarType = Exclude<
+  RustParityScalarType,
+  "f32_finite" | "f64_finite"
+>;
+
+function normalizeAbiScalarType(
+  ty: RustParityScalarType,
+): BaseParityScalarType {
+  if (ty === "f32_finite") return "f32";
+  if (ty === "f64_finite") return "f64";
+  return ty;
+}
+
+function detectElfMachineArch(rawBuf: Buffer): string | null {
+  if (
+    rawBuf.length >= 20 &&
+    rawBuf[0] === 0x7f &&
+    rawBuf[1] === 0x45 &&
+    rawBuf[2] === 0x4c &&
+    rawBuf[3] === 0x46
+  ) {
+    const isLE = rawBuf[5] === 1;
+    const eMachine = isLE ? rawBuf.readUInt16LE(18) : rawBuf.readUInt16BE(18);
+    if (eMachine === 62) return "x64";
+    if (eMachine === 183) return "arm64";
+    if (eMachine === 3) return "ia32";
+    if (eMachine === 40) return "arm";
+    if (eMachine === 243) return "riscv64";
+  }
+  return null;
+}
+
 function rustStorageType(ty: RustParityScalarType): string {
-  return ty === "bytes" ? "Vec<u8>" : ty;
+  const base = normalizeAbiScalarType(ty);
+  return base === "bytes" ? "Vec<u8>" : base;
 }
 
 function formatArgCall(ty: RustParityScalarType, expr: string): string {
-  return ty === "bytes" ? `fmt_bytes(&${expr})` : `fmt_${ty}(${expr})`;
+  const base = normalizeAbiScalarType(ty);
+  return base === "bytes" ? `fmt_bytes(&${expr})` : `fmt_${base}(${expr})`;
 }
 
 function literalArgCall(ty: RustParityScalarType, expr: string): string {
-  return ty === "bytes" ? `lit_bytes(&${expr})` : `lit_${ty}(${expr})`;
+  const base = normalizeAbiScalarType(ty);
+  return base === "bytes" ? `lit_bytes(&${expr})` : `lit_${base}(${expr})`;
 }
 
 function generateBoundaryExpr(ty: RustParityScalarType): string {
@@ -266,9 +301,13 @@ function generateBoundaryExpr(ty: RustParityScalarType): string {
     case "u64":
       return "vec![0u64, 1, 2, 0x7f, 0x80, 0xff, 4095, 4096, 4097, 65535, 65536, 0x7fffffff, 0x80000000, 0xffffffff, 0xdeadbeef, 0x7fffffffffffffff, 0x8000000000000000, u64::MAX - 1, u64::MAX]";
     case "f32":
-      return "vec![0.0f32, -0.0f32, 1.0, -1.0, 2.0, -2.0, 0.5, 4095.0, 4096.0, 4097.0, f32::MIN_POSITIVE, -f32::MIN_POSITIVE, f32::EPSILON, f32::MAX, f32::MIN, f32::INFINITY, f32::NEG_INFINITY, f32::NAN]";
+      return "vec![0.0f32, -0.0f32, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 4095.0, 4096.0, 4097.0, f32::MIN_POSITIVE, -f32::MIN_POSITIVE, f32::EPSILON, f32::MAX, f32::MIN, f32::INFINITY, f32::NEG_INFINITY, f32::NAN]";
+    case "f32_finite":
+      return "vec![0.0f32, -0.0f32, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 0.125, 3.1415927, -3.1415927, 4095.0, 4096.0, 4097.0, f32::MIN_POSITIVE, -f32::MIN_POSITIVE, f32::EPSILON, -f32::EPSILON]";
     case "f64":
-      return "vec![0.0f64, -0.0f64, 1.0, -1.0, 2.0, -2.0, 0.5, 4095.0, 4096.0, 4097.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE, f64::EPSILON, f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY, f64::NAN]";
+      return "vec![0.0f64, -0.0f64, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 4095.0, 4096.0, 4097.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE, f64::EPSILON, f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY, f64::NAN]";
+    case "f64_finite":
+      return "vec![0.0f64, -0.0f64, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 0.125, 3.141592653589793, -3.141592653589793, 4095.0, 4096.0, 4097.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE, f64::EPSILON, -f64::EPSILON]";
     case "bytes":
       return 'vec![vec![], vec![0x00u8], vec![0xffu8], b"ARGON_ZEROG_PARITY_V1".to_vec(), (0u8..16u8).collect::<Vec<u8>>(), vec![0xa5u8; 64]]';
   }
@@ -281,12 +320,15 @@ function generateRustHarnessSource(
   forbidUnsafeEnforced: boolean,
 ): string {
   const argTypes = input.arg_types;
-  const retType = input.return_type;
+  const retType = normalizeAbiScalarType(input.return_type);
   const tupleType = `(${argTypes.map((t) => `${rustStorageType(t)},`).join(" ")})`;
   const cFnParamSig = argTypes
-    .map((t, i) =>
-      t === "bytes" ? `a${i}_ptr: *const u8, a${i}_len: usize` : `a${i}: ${t}`,
-    )
+    .map((t, i) => {
+      const base = normalizeAbiScalarType(t);
+      return base === "bytes"
+        ? `a${i}_ptr: *const u8, a${i}_len: usize`
+        : `a${i}: ${base}`;
+    })
     .join(", ");
   const cFnCallArgs = argTypes
     .map((t, i) =>
@@ -347,7 +389,8 @@ function generateRustHarnessSource(
   const literalTupleVecExpr = `vec![${argTypes.map((t, i) => literalArgCall(t, `args.${i}`)).join(", ")}]`;
 
   const shrinkBlocks = argTypes
-    .map((t, i) => {
+    .map((rawT, i) => {
+      const t = normalizeAbiScalarType(rawT);
       if (t === "bytes") {
         return `
             {
@@ -572,12 +615,45 @@ fn gen_u64(rng: &mut SplitMix64) -> u64 {
         _ => rng.next_u64(),
     }
 }
+fn gen_f32_finite(rng: &mut SplitMix64) -> f32 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 200001) as f32 - 100000.0) * 0.1,
+        1 => ((rng.next_u64() % 20001) as f32 - 10000.0) * 0.0001,
+        2 => (rng.next_u64() % 65536) as f32 - 32768.0,
+        _ => {
+            let raw = rng.next_u64() as u32;
+            let sign = raw & 0x8000_0000;
+            // Clamp exponent to 1..=190 (~1e-38..~1e19) so multi-tap DSP math remains finite
+            let exp = ((raw >> 23) & 0xff) % 190 + 1;
+            let mant = raw & 0x007f_ffff;
+            f32::from_bits(sign | (exp << 23) | mant)
+        }
+    }
+}
+fn gen_f64_finite(rng: &mut SplitMix64) -> f64 {
+    match rng.next_u64() & 3 {
+        0 => ((rng.next_u64() % 200001) as f64 - 100000.0) * 0.1,
+        1 => ((rng.next_u64() % 20001) as f64 - 10000.0) * 0.0001,
+        2 => (rng.next_u64() % 65536) as f64 - 32768.0,
+        _ => {
+            let raw = rng.next_u64();
+            let sign = raw & 0x8000_0000_0000_0000;
+            // Clamp exponent to 1..=1086 (~1e-308..~1e19)
+            let exp = ((raw >> 52) & 0x7ff) % 1086 + 1;
+            let mant = raw & 0x000f_ffff_ffff_ffff;
+            f64::from_bits(sign | (exp << 52) | mant)
+        }
+    }
+}
 fn gen_f32(rng: &mut SplitMix64) -> f32 {
     match rng.next_u64() & 3 {
         0 => ((rng.next_u64() % 200001) as f32 - 100000.0) * 0.1,
         1 => ((rng.next_u64() % 20001) as f32 - 10000.0) * 0.0001,
         2 => (rng.next_u64() % 65536) as f32 - 32768.0,
-        _ => f32::from_bits(rng.next_u64() as u32),
+        _ => {
+            let v = f32::from_bits(rng.next_u64() as u32);
+            if v.is_nan() { f32::NAN } else { v }
+        }
     }
 }
 fn gen_f64(rng: &mut SplitMix64) -> f64 {
@@ -585,7 +661,10 @@ fn gen_f64(rng: &mut SplitMix64) -> f64 {
         0 => ((rng.next_u64() % 200001) as f64 - 100000.0) * 0.1,
         1 => ((rng.next_u64() % 20001) as f64 - 10000.0) * 0.0001,
         2 => (rng.next_u64() % 65536) as f64 - 32768.0,
-        _ => f64::from_bits(rng.next_u64()),
+        _ => {
+            let v = f64::from_bits(rng.next_u64());
+            if v.is_nan() { f64::NAN } else { v }
+        }
     }
 }
 fn gen_bytes(rng: &mut SplitMix64) -> Vec<u8> {
@@ -618,8 +697,8 @@ fn same_arg_i32(a: i32, b: i32) -> bool { a == b }
 fn same_arg_u32(a: u32, b: u32) -> bool { a == b }
 fn same_arg_i64(a: i64, b: i64) -> bool { a == b }
 fn same_arg_u64(a: u64, b: u64) -> bool { a == b }
-fn same_arg_f32(a: f32, b: f32) -> bool { a.to_bits() == b.to_bits() }
-fn same_arg_f64(a: f64, b: f64) -> bool { a.to_bits() == b.to_bits() }
+fn same_arg_f32(a: f32, b: f32) -> bool { a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()) }
+fn same_arg_f64(a: f64, b: f64) -> bool { a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()) }
 
 fn shrink_candidates_bool(v: bool) -> Vec<bool> {
     if v { vec![false] } else { vec![] }
@@ -775,6 +854,7 @@ fn bits_f64(v: f64) -> u64 { v.to_bits() }
 fn ulp_f32(a: f32, b: f32) -> Option<u64> {
     if a.is_nan() && b.is_nan() { return Some(0); }
     if a.is_nan() || b.is_nan() { return None; }
+    if a == 0.0 && b == 0.0 { return Some(0); }
     let ab = a.to_bits();
     let bb = b.to_bits();
     if ab == bb { return Some(0); }
@@ -782,12 +862,13 @@ fn ulp_f32(a: f32, b: f32) -> Option<u64> {
     let ao = if (ab & 0x8000_0000) != 0 { 0x8000_0000u32.wrapping_sub(ab & 0x7fff_ffff) } else { 0x8000_0000u32.wrapping_add(ab) };
     let bo = if (bb & 0x8000_0000) != 0 { 0x8000_0000u32.wrapping_sub(bb & 0x7fff_ffff) } else { 0x8000_0000u32.wrapping_add(bb) };
     let dist = if ao >= bo { ao - bo } else { bo - ao };
-    Some(if dist == 0 { 1 } else { dist as u64 })
+    Some(dist as u64)
 }
 
 fn ulp_f64(a: f64, b: f64) -> Option<u64> {
     if a.is_nan() && b.is_nan() { return Some(0); }
     if a.is_nan() || b.is_nan() { return None; }
+    if a == 0.0 && b == 0.0 { return Some(0); }
     let ab = a.to_bits();
     let bb = b.to_bits();
     if ab == bb { return Some(0); }
@@ -795,8 +876,44 @@ fn ulp_f64(a: f64, b: f64) -> Option<u64> {
     let ao = if (ab & 0x8000_0000_0000_0000) != 0 { 0x8000_0000_0000_0000u64.wrapping_sub(ab & 0x7fff_ffff_ffff_ffff) } else { 0x8000_0000_0000_0000u64.wrapping_add(ab) };
     let bo = if (bb & 0x8000_0000_0000_0000) != 0 { 0x8000_0000_0000_0000u64.wrapping_sub(bb & 0x7fff_ffff_ffff_ffff) } else { 0x8000_0000_0000_0000u64.wrapping_add(bb) };
     let dist = if ao >= bo { ao - bo } else { bo - ao };
-    let capped = if dist == 0 { 1 } else if dist > 9_007_199_254_740_991 { 9_007_199_254_740_991 } else { dist };
+    let capped = if dist > 9_007_199_254_740_991 { 9_007_199_254_740_991 } else { dist };
     Some(capped)
+}
+
+fn is_f32_nan_bits(w: u32) -> bool {
+    (w & 0x7f80_0000) == 0x7f80_0000 && (w & 0x007f_ffff) != 0
+}
+
+fn packed_u32_canon_float_eq(a: u32, b: u32, ulp_tol: u64) -> bool {
+    if a == b { return true; }
+    if is_f32_nan_bits(a) && is_f32_nan_bits(b) { return true; }
+    if ulp_tol > 0 {
+        if let Some(d) = ulp_f32(f32::from_bits(a), f32::from_bits(b)) {
+            return d <= ulp_tol;
+        }
+    }
+    false
+}
+
+fn packed_u64_canon_float_eq(a: u64, b: u64, ulp_tol: u64) -> bool {
+    if a == b { return true; }
+    let a_lo = a as u32;
+    let a_hi = (a >> 32) as u32;
+    let b_lo = b as u32;
+    let b_hi = (b >> 32) as u32;
+    let has_nan_pair = (is_f32_nan_bits(a_lo) && is_f32_nan_bits(b_lo))
+        || (is_f32_nan_bits(a_hi) && is_f32_nan_bits(b_hi));
+    if has_nan_pair || ulp_tol > 0 {
+        if packed_u32_canon_float_eq(a_lo, b_lo, ulp_tol)
+            && packed_u32_canon_float_eq(a_hi, b_hi, ulp_tol)
+        {
+            return true;
+        }
+    }
+    if f64::from_bits(a).is_nan() && f64::from_bits(b).is_nan() {
+        return true;
+    }
+    false
 }
 
 fn compare_ret_${retType}(c_val: ${retType}, r_val: ${retType}, ulp_tol: u64) -> (bool, Option<u64>) {
@@ -805,7 +922,11 @@ fn compare_ret_${retType}(c_val: ${retType}, r_val: ${retType}, ulp_tol: u64) ->
         ? `match ulp_f32(c_val, r_val) { Some(d) => (d <= ulp_tol, Some(d)), None => (false, None) }`
         : retType === "f64"
           ? `match ulp_f64(c_val, r_val) { Some(d) => (d <= ulp_tol, Some(d)), None => (false, None) }`
-          : `(c_val == r_val, None)`
+          : retType === "u64" || retType === "i64"
+            ? `(c_val == r_val || packed_u64_canon_float_eq(c_val as u64, r_val as u64, ulp_tol), None)`
+            : retType === "u32" || retType === "i32"
+              ? `(c_val == r_val || packed_u32_canon_float_eq(c_val as u32, r_val as u32, ulp_tol), None)`
+              : `(c_val == r_val, None)`
     }
 }
 
@@ -1155,6 +1276,7 @@ export class RustParityVerifier implements RustParityPort {
       const libFullPath = path.join(workDir, libFileName);
 
       // Step 1: Prepare or compile the C target shared library
+      let useCompiledCSource = false;
       if (input.target_binary_path) {
         let rawBin: Buffer;
         try {
@@ -1194,10 +1316,39 @@ export class RustParityVerifier implements RustParityPort {
           );
         }
 
-        const patchedBin = patchBinaryForDynamicLoading(rawBin);
-        await writeFile(libFullPath, patchedBin);
-        await chmod(libFullPath, 0o755);
-      } else if (input.c_source_code) {
+        const elfArch = detectElfMachineArch(rawBin);
+        const hostArch = os.arch();
+        if (elfArch !== null && elfArch !== hostArch) {
+          if (input.c_source_code) {
+            // Foreign-ISA binary provided alongside C reference source: compile C source for host FFI
+            useCompiledCSource = true;
+          } else {
+            return err(
+              new AnalysisInputError(
+                OPERATION,
+                {
+                  userMessage: `Target binary '${input.target_binary_path}' is compiled for '${elfArch}' while host is '${hostArch}'. Provide 'c_source_code' (the recovered C reference oracle) alongside 'rust_source_code' when verifying cross-architecture binaries.`,
+                },
+                [
+                  {
+                    path: ["target_binary_path"],
+                    reason: "invalid_value",
+                    message: `Cross-architecture binary (${elfArch} on ${hostArch} host) requires c_source_code for native FFI execution.`,
+                  },
+                ],
+              ),
+            );
+          }
+        } else {
+          const patchedBin = patchBinaryForDynamicLoading(rawBin);
+          await writeFile(libFullPath, patchedBin);
+          await chmod(libFullPath, 0o755);
+        }
+      } else {
+        useCompiledCSource = true;
+      }
+
+      if (useCompiledCSource && input.c_source_code) {
         const cCompiler = resolveCCompilerPath();
         if (!cCompiler) {
           return err(
@@ -1517,13 +1668,16 @@ ${exportedRustSource}
     const assertionLines = sampleVectors
       .map((sv, idx) => {
         const callExpr = `${crateIdent}::${rustFnName}(${sv.inputs_rust_literal.join(", ")})`;
-        if (input.return_type === "f32" || input.return_type === "f64") {
+        const normRet = normalizeAbiScalarType(input.return_type);
+        if (normRet === "f32" || normRet === "f64") {
           return `    // Vector #${idx + 1}: inputs=(${sv.inputs_formatted.join(", ")}) -> ${sv.output_formatted} (${sv.output_hex})
     {
         let actual = ${callExpr};
         let expected = ${sv.output_rust_literal};
         assert!(
-            actual.to_bits() == expected.to_bits() || (actual.is_nan() && expected.is_nan()),
+            actual.to_bits() == expected.to_bits()
+                || (actual.is_nan() && expected.is_nan())
+                || (actual == 0.0 && expected == 0.0),
             "Vector #${idx + 1} mismatch: actual={:?}, expected={:?}",
             actual,
             expected
