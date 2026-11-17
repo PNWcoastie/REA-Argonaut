@@ -72,12 +72,20 @@ const NULL_UNSAFE_CALLEES = new Set([
 
 const BENIGN_REPEAT_CALLEES = new Set([
   "free",
+  "close",
+  "fclose",
+  "strlen",
+  "wcslen",
+  "strcmp",
   "printf",
   "fprintf",
   "puts",
   "putchar",
   "memset",
   "memcpy",
+  "push_back",
+  "emplace_back",
+  "shrink_to_fit",
   "__stack_chk_fail",
   "__android_log_print",
   "_zdlpv",
@@ -102,8 +110,24 @@ const EXCLUDED_POINTER_REGS = new Set([
   "x30",
 ]);
 
+const INTEGER_MULTIPLY_MNEMS = new Set([
+  "mul",
+  "mull",
+  "mulq",
+  "imul",
+  "imulw",
+  "imull",
+  "imulq",
+  "madd",
+  "smull",
+  "umull",
+]);
+
 const ALLOC_OR_COPY_CALLEES =
-  /^(?:malloc|calloc|realloc|memcpy|memmove|_znwm|_znam|get_size|getdecodebufsize|getencodebufsize)$/iu;
+  /^(?:malloc|calloc|realloc|memcpy|memmove|_znwm|_znam)$/iu;
+
+const SIZE_HELPER_CALLEE_PATTERN =
+  /(?:size|decode|encode|alloc|copy|resize|buffer)/iu;
 
 function toHexAddr(addr: bigint): string {
   return `0x${(addr < 0n ? 0n : addr).toString(16)}`;
@@ -160,6 +184,35 @@ function isCalleeSavedReg(reg: string): boolean {
   );
 }
 
+function isStackZeroStore(rawLower: string, m: string): boolean {
+  if (!m.startsWith("str") && !m.startsWith("stp") && !m.startsWith("mov")) {
+    return false;
+  }
+  return (
+    /(?:xzr|wzr|,\s*#?0(?:x0+)?\b)/u.test(rawLower) &&
+    /\[(?:sp|rsp)/u.test(rawLower)
+  );
+}
+
+function extractStackOffsetFromText(rawLower: string): number | null {
+  const match =
+    /\[(?:sp|rsp)(?:\s*(?:,\s*#?|([+-])\s*)(-?(?:0x[0-9a-fA-F]+|\d+)))?\]/u.exec(
+      rawLower,
+    );
+  if (match !== null) {
+    if (match[2] === undefined) return 0;
+    const val = parseImmValue(match[2]);
+    if (val === null) return null;
+    return match[1] === "-" ? -val : val;
+  }
+  const addLeaMatch =
+    /(?:sp|rsp)\s*,\s*#?(-?(?:0x[0-9a-fA-F]+|\d+))/u.exec(rawLower);
+  if (addLeaMatch !== null) {
+    return parseImmValue(addLeaMatch[1]!);
+  }
+  return null;
+}
+
 function writesRegisterAsDestination(
   ins: HazardInstructionRef,
   reg: string,
@@ -170,9 +223,12 @@ function writesRegisterAsDestination(
     m.startsWith("stur") ||
     m.startsWith("stp") ||
     m.startsWith("cmp") ||
+    m.startsWith("fcmp") ||
     m.startsWith("test") ||
     m.startsWith("cbz") ||
     m.startsWith("cbnz") ||
+    m.startsWith("tbz") ||
+    m.startsWith("tbnz") ||
     m.startsWith("b.") ||
     ins.isCall ||
     ins.isJump ||
@@ -183,16 +239,10 @@ function writesRegisterAsDestination(
   const targetReg = reg.toLowerCase();
   const dest = (ins.operands[0] ?? "").replace(/^%/u, "").trim().toLowerCase();
   if (dest === targetReg) return true;
-  if (
-    targetReg.startsWith("x") &&
-    dest === `w${targetReg.slice(1)}`
-  ) {
+  if (targetReg.startsWith("x") && dest === `w${targetReg.slice(1)}`) {
     return true;
   }
-  if (
-    targetReg.startsWith("r") &&
-    dest === `e${targetReg.slice(1)}`
-  ) {
+  if (targetReg.startsWith("r") && dest === `e${targetReg.slice(1)}`) {
     return true;
   }
   return false;
@@ -209,12 +259,34 @@ function isNullCheckOnReg(ins: HazardInstructionRef, reg: string): boolean {
   if (
     m.startsWith("cmp") &&
     op0 === r &&
-    (op1 === "#0" || op1 === "#0x0" || op1 === "0" || op1 === "0x0" || op1 === "xzr" || op1 === "wzr")
+    (op1 === "#0" ||
+      op1 === "#0x0" ||
+      op1 === "0" ||
+      op1 === "0x0" ||
+      op1 === "xzr" ||
+      op1 === "wzr")
   ) {
     return true;
   }
   if (m.startsWith("test") && op0 === r && op1 === r) {
     return true;
+  }
+  return false;
+}
+
+function isRegisterNarrowingInstruction(ins: HazardInstructionRef): boolean {
+  const m = ins.mnemonic.toLowerCase();
+  if (m === "sxtw" || m === "uxtw" || m === "movsxd" || m === "movslq") {
+    return true;
+  }
+  if (m === "mov" && ins.operands.length >= 2) {
+    const dst = ins.operands[0]!.replace(/^%/u, "").trim().toLowerCase();
+    const src = ins.operands[1]!.replace(/^%/u, "").trim().toLowerCase();
+    const is32ArgReg = (r: string) =>
+      /^(?:w[1-5]|e(?:si|dx|cx)|r(?:8|9)d)$/u.test(r);
+    if (is32ArgReg(dst) && is32ArgReg(src)) {
+      return true;
+    }
   }
   return false;
 }
@@ -265,14 +337,23 @@ export function extractLatentBinaryHazards(
     ) {
       return true;
     }
-    return ins.operands.some((op) => /\[.*[+*].*\]|\(.*,.*,.*\)/u.test(op));
+    return ins.operands.some((op) => {
+      const lowerOp = op.toLowerCase();
+      if (/\b(?:rsp|rbp|esp|ebp|sp|x29|fp)\b/u.test(lowerOp)) {
+        return false;
+      }
+      return /\[[^[\]]*\*[^[\]]*\]|\[[^[\]]*\+[^[\]]*[a-zA-Z]|\([^()]+,[^()]+,[^()]+\)/u.test(
+        op,
+      );
+    });
   });
 
-  const procTakesSizeT = /(?:PKhm|Pvm|m(?:Pi|S|i)|size_t|unsigned\s+long)/u.test(
-    proc.name,
-  );
-  let hasZeroedStackSlots = false;
-  let passedStackAddrToCallee = false;
+  const procTakesSizeT =
+    /(?:^_Z\d+[A-Za-z0-9_]*?(?:PKhm|Pvm|Pm)|(?:^|[^A-Za-z0-9_])(?:size_t|unsigned\s+long)\b)/u.test(
+      proc.name,
+    );
+  const zeroedStackOffsets = new Set<number>();
+  let passedZeroedStackCallIdx = -1;
 
   for (let i = 0; i < proc.instructions.length; i++) {
     const ins = proc.instructions[i]!;
@@ -283,13 +364,16 @@ export function extractLatentBinaryHazards(
     const lowerOps = opsJoined.toLowerCase();
     const rawLower = ins.rawText.toLowerCase();
 
+    if (ins.isReturn) {
+      zeroedStackOffsets.clear();
+      passedZeroedStackCallIdx = -1;
+    }
+
     // 1. potential_integer_overflow_to_pointer
     const is32BitRegMention =
       /\b(?:e[abcd]x|e[sd]i|r(?:8|9|1[0-5])d|w\d+)\b/u.test(lowerOps);
     if (
-      (m.startsWith("imul") ||
-        m.startsWith("mul") ||
-        m === "madd" ||
+      (INTEGER_MULTIPLY_MNEMS.has(m) ||
         (m.startsWith("shl") && hasSignExtOrArrayIndex)) &&
       (is32BitRegMention || hasSignExtOrArrayIndex)
     ) {
@@ -322,8 +406,12 @@ export function extractLatentBinaryHazards(
         if (
           prevM.startsWith("test") ||
           prevM.startsWith("cmp") ||
+          prevM.startsWith("fcmp") ||
+          prevM === "subs" ||
           prevM.startsWith("cbz") ||
           prevM.startsWith("cbnz") ||
+          prevM.startsWith("tbz") ||
+          prevM.startsWith("tbnz") ||
           prevM.startsWith("ucomi")
         ) {
           guarded = true;
@@ -465,7 +553,7 @@ export function extractLatentBinaryHazards(
       }
     }
 
-    // 6. register_writeback_offset_clobber (AArch64 pre/post-indexed writeback followed by base+imm access)
+    // 6. register_writeback_offset_clobber
     if (
       m.startsWith("ldr") ||
       m.startsWith("ldur") ||
@@ -494,7 +582,7 @@ export function extractLatentBinaryHazards(
           const end = Math.min(proc.instructions.length - 1, i + 12);
           for (let j = i + 1; j <= end; j++) {
             const next = proc.instructions[j]!;
-            if (next.isReturn) break;
+            if (next.isJump || next.isConditionalJump || next.isReturn) break;
             const nextMemMatch = offsetPattern.exec(next.rawText);
             if (nextMemMatch !== null) {
               const followOff = parseImmValue(nextMemMatch[1]!);
@@ -509,7 +597,10 @@ export function extractLatentBinaryHazards(
                 break;
               }
             }
-            if (writesRegisterAsDestination(next, baseReg)) {
+            if (
+              writesRegisterAsDestination(next, baseReg) ||
+              (next.isCall && !isCalleeSavedReg(baseReg))
+            ) {
               break;
             }
           }
@@ -517,7 +608,7 @@ export function extractLatentBinaryHazards(
       }
     }
 
-    // 7. null_deref_before_check (dereference or strlen-style call followed by null check)
+    // 7. null_deref_before_check
     const derefRegs = new Set<string>();
     const bracketMemMatch = /\[([a-zA-Z0-9]+)(?:\s*[,+\]-]|\])/u.exec(
       rawLower,
@@ -527,7 +618,10 @@ export function extractLatentBinaryHazards(
       !m.startsWith("lea") &&
       !EXCLUDED_POINTER_REGS.has(bracketMemMatch[1]!.toLowerCase())
     ) {
-      derefRegs.add(bracketMemMatch[1]!.toLowerCase());
+      const memBase = bracketMemMatch[1]!.toLowerCase();
+      if (!writesRegisterAsDestination(ins, memBase)) {
+        derefRegs.add(memBase);
+      }
     }
     const attMemMatch = /\(%([a-zA-Z0-9]+)\)/u.exec(rawLower);
     if (
@@ -535,7 +629,10 @@ export function extractLatentBinaryHazards(
       !m.startsWith("lea") &&
       !EXCLUDED_POINTER_REGS.has(attMemMatch[1]!.toLowerCase())
     ) {
-      derefRegs.add(attMemMatch[1]!.toLowerCase());
+      const memBase = attMemMatch[1]!.toLowerCase();
+      if (!writesRegisterAsDestination(ins, memBase)) {
+        derefRegs.add(memBase);
+      }
     }
     if (ins.isCall && ins.targetAddress !== null) {
       const callee = resolveCalleeName(ins.targetAddress, model);
@@ -555,7 +652,8 @@ export function extractLatentBinaryHazards(
             if (
               (dst === "x0" || dst === "rdi") &&
               src.length > 0 &&
-              !EXCLUDED_POINTER_REGS.has(src)
+              !EXCLUDED_POINTER_REGS.has(src) &&
+              isCalleeSavedReg(src)
             ) {
               derefRegs.add(src);
             }
@@ -568,7 +666,6 @@ export function extractLatentBinaryHazards(
       const end = Math.min(proc.instructions.length - 1, i + 6);
       for (let j = i + 1; j <= end; j++) {
         const next = proc.instructions[j]!;
-        if (next.isReturn) break;
         if (isNullCheckOnReg(next, dReg)) {
           recordHazard(
             "null_deref_before_check",
@@ -579,6 +676,7 @@ export function extractLatentBinaryHazards(
           );
           break;
         }
+        if (next.isJump || next.isConditionalJump || next.isReturn) break;
         if (writesRegisterAsDestination(next, dReg)) {
           break;
         }
@@ -591,34 +689,38 @@ export function extractLatentBinaryHazards(
     // 8. size_truncation_or_unsigned_underflow
     if (ins.isCall && ins.targetAddress !== null) {
       const cleanCallee = resolveCalleeName(ins.targetAddress, model);
-      // 8a: strlen() - const without bounds check before strncpy/memcpy/memmove
+      // 8a: strlen() - const without conditional bounds guard before strncpy/memcpy/memmove
       if (cleanCallee === "strlen" || cleanCallee === "wcslen") {
-        let sawLenAdjust = false;
+        let sawLenSubtract = false;
+        let sawCondCompare = false;
         let sawBoundsGuard = false;
         const scanEnd = Math.min(proc.instructions.length - 1, i + 10);
         for (let j = i + 1; j <= scanEnd; j++) {
           const next = proc.instructions[j]!;
           const nm = next.mnemonic.toLowerCase();
           if (next.isReturn) break;
-          if (
-            nm.startsWith("cmp") ||
-            nm === "subs" ||
-            nm.startsWith("test")
-          ) {
+          if (nm.startsWith("cmp") || nm.startsWith("test") || nm === "subs") {
+            sawCondCompare = true;
+          } else if (next.isConditionalJump && sawCondCompare) {
             sawBoundsGuard = true;
+          } else if (!next.isConditionalJump) {
+            sawCondCompare = false;
           }
+          const isNegAdd =
+            nm === "add" &&
+            /#-|-\d+/u.test(next.rawText);
           if (
-            (nm === "sub" || nm === "subs" || nm === "add") &&
+            (nm === "sub" || nm === "subs" || isNegAdd) &&
             /\b(?:x0|w0|x2|w2|rax|eax|rdx|edx)\b/u.test(
               next.rawText.toLowerCase(),
             )
           ) {
-            sawLenAdjust = true;
+            sawLenSubtract = true;
           }
           if (next.isCall && next.targetAddress !== null) {
             const copyCallee = resolveCalleeName(next.targetAddress, model);
             if (
-              sawLenAdjust &&
+              sawLenSubtract &&
               !sawBoundsGuard &&
               (copyCallee === "strncpy" ||
                 copyCallee === "memcpy" ||
@@ -630,7 +732,7 @@ export function extractLatentBinaryHazards(
                 "high",
                 addrHex,
                 rendered,
-                `Length from '${cleanCallee}' is decremented without an underflow bounds check prior to '${copyCallee}'; use checked_sub() and slice slicing in Safe Rust.`,
+                `Length from '${cleanCallee}' is decremented without an underflow bounds guard prior to '${copyCallee}'; use checked_sub() and slice slicing in Safe Rust.`,
               );
               break;
             }
@@ -638,22 +740,21 @@ export function extractLatentBinaryHazards(
         }
       }
 
-      // 8b: size_t -> 32-bit int narrowing at callsite or sxtw/movsxd into alloc/copy
+      // 8b: size_t -> 32-bit int narrowing at callsite
       if (
         procTakesSizeT &&
-        ALLOC_OR_COPY_CALLEES.test(cleanCallee)
+        (ALLOC_OR_COPY_CALLEES.test(cleanCallee) ||
+          SIZE_HELPER_CALLEE_PATTERN.test(cleanCallee))
       ) {
         for (let back = Math.max(0, i - 5); back < i; back++) {
           const prev = proc.instructions[back]!;
-          if (
-            /\b(?:w[1-5]|esi|edx|ecx)\b/u.test(prev.rawText.toLowerCase())
-          ) {
+          if (isRegisterNarrowingInstruction(prev)) {
             recordHazard(
               "size_truncation_or_unsigned_underflow",
               "high",
               addrHex,
               rendered,
-              `Procedure accepting 64-bit size_t narrows or passes a 32-bit length register into '${resolveRawCalleeName(ins.targetAddress, model)}'; preserve full usize width with TryFrom in Safe Rust.`,
+              `Procedure accepting 64-bit size_t narrows or sign-extends a 32-bit length register into '${resolveRawCalleeName(ins.targetAddress, model)}'; preserve full usize width with TryFrom in Safe Rust.`,
             );
             break;
           }
@@ -684,8 +785,15 @@ export function extractLatentBinaryHazards(
     // 9. unpopulated_out_param_or_duplicate_call
     // 9a: Back-to-back duplicate identical calls with no conditional branch between
     if (ins.isCall && ins.targetAddress !== null) {
+      const rawCallee = resolveRawCalleeName(ins.targetAddress, model);
       const cleanCallee = resolveCalleeName(ins.targetAddress, model);
-      if (cleanCallee.length > 0 && !BENIGN_REPEAT_CALLEES.has(cleanCallee)) {
+      const isDestructor =
+        /(?:D[012]Ev|D[012]E)$/u.test(rawCallee) || rawCallee.includes("~");
+      if (
+        cleanCallee.length > 0 &&
+        !isDestructor &&
+        !BENIGN_REPEAT_CALLEES.has(cleanCallee)
+      ) {
         const scanEnd = Math.min(proc.instructions.length - 1, i + 4);
         for (let j = i + 1; j <= scanEnd; j++) {
           const next = proc.instructions[j]!;
@@ -699,7 +807,7 @@ export function extractLatentBinaryHazards(
                 "medium",
                 addrHex,
                 rendered,
-                `Duplicate back-to-back call to '${resolveRawCalleeName(ins.targetAddress, model)}' at ${toHexAddr(next.address)} without intervening control flow; consolidate into a single explicit call or Result-returning helper in Safe Rust.`,
+                `Duplicate back-to-back call to '${rawCallee}' at ${toHexAddr(next.address)} without intervening control flow; consolidate into a single explicit call or Result-returning helper in Safe Rust.`,
               );
             }
             break;
@@ -708,29 +816,35 @@ export function extractLatentBinaryHazards(
       }
     }
 
-    // 9b: Zeroed stack out-parameter slots passed to a callee followed by bit-31 sign shift
-    if (
-      (m.startsWith("str") || m.startsWith("stp") || m.startsWith("mov")) &&
-      /(?:xzr|wzr|,\s*#?0\b)/u.test(rawLower) &&
-      /\[(?:sp|rsp)/u.test(rawLower)
-    ) {
-      hasZeroedStackSlots = true;
-    }
-    if (
+    // 9b: Zeroed stack out-parameter slot passed to a callee followed by bit-31 sign shift
+    if (isStackZeroStore(rawLower, m)) {
+      const off = extractStackOffsetFromText(rawLower);
+      if (off !== null) {
+        zeroedStackOffsets.add(off);
+        if (m.startsWith("stp")) {
+          zeroedStackOffsets.add(off + 8);
+        }
+      }
+    } else if (
       (m === "add" || m === "lea") &&
-      /\b(?:sp|rsp)\b/u.test(rawLower)
+      /\b(?:sp|rsp)\b/u.test(rawLower) &&
+      zeroedStackOffsets.size > 0
     ) {
-      const scanEnd = Math.min(proc.instructions.length - 1, i + 4);
-      for (let j = i + 1; j <= scanEnd; j++) {
-        if (proc.instructions[j]!.isCall) {
-          passedStackAddrToCallee = true;
-          break;
+      const off = extractStackOffsetFromText(rawLower);
+      if (off !== null && zeroedStackOffsets.has(off)) {
+        const scanEnd = Math.min(proc.instructions.length - 1, i + 4);
+        for (let j = i + 1; j <= scanEnd; j++) {
+          if (proc.instructions[j]!.isCall) {
+            passedZeroedStackCallIdx = j;
+            break;
+          }
         }
       }
     }
     if (
-      hasZeroedStackSlots &&
-      passedStackAddrToCallee &&
+      passedZeroedStackCallIdx >= 0 &&
+      i > passedZeroedStackCallIdx &&
+      i - passedZeroedStackCallIdx <= 12 &&
       ((m === "lsr" && /#(?:31|0x1f)\b/u.test(rawLower)) ||
         (m === "ubfx" && /#(?:31|0x1f),\s*#1\b/u.test(rawLower)) ||
         (m === "shr" && /\b(?:31|0x1f)\b/u.test(rawLower)))
@@ -740,8 +854,9 @@ export function extractLatentBinaryHazards(
         "medium",
         addrHex,
         rendered,
-        "Zero-initialized stack out-parameter passed to callee before bit-31 sign extraction (0 > thresh pattern); return structured tuple/struct values instead of nullable C out-pointers in Safe Rust.",
+        "Zero-initialized stack out-parameter passed to callee before bit-31 sign extraction; return structured tuple/struct values instead of nullable C out-pointers in Safe Rust.",
       );
+      passedZeroedStackCallIdx = -1;
     }
   }
 

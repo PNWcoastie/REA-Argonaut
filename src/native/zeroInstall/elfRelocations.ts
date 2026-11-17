@@ -10,9 +10,16 @@ export interface RecoveredJniMethod {
   readonly fnAddress: bigint;
 }
 
+export type CppLinkerTrapKind =
+  | "ndk_cpp_runtime_reexport"
+  | "weak_stl_typeinfo_or_vtable"
+  | "static_third_party_collision"
+  | "sibling_hal_callback_collision"
+  | "stl_template_method_collision";
+
 export interface CppLinkerTrapFilterResult {
   readonly trapped: boolean;
-  readonly trapKind: string | null;
+  readonly trapKind: CppLinkerTrapKind | null;
 }
 
 /**
@@ -145,9 +152,13 @@ export function decodeElfRelrRelocations(
 }
 
 /**
- * Filters known false-positive C++ linker-resolution collisions identified in
- * cross-binary ELF reachability auditing (NDK runtime re-exports, weak STL
- * typeinfo/vtables, static third-party libraries, and sibling HAL callbacks).
+ * Filters all 5 false-positive C++ linker-resolution collision classes identified
+ * in cross-binary ELF reachability auditing:
+ * 1. NDK static C++ runtime re-exports (_Znwm, _ZdlPv, __cxa_*, __gxx_personality_*)
+ * 2. Weak or libc++/libstdc++ STL RTTI typeinfo/vtables (_ZTI*, _ZTS*, _ZTV*, _ZTT*)
+ * 3. Statically linked third-party multimedia/compression library symbols
+ * 4. Generic unscoped sibling HAL/plugin callback collisions
+ * 5. Weak/inline STL template method instantiations (_ZNSt3__1*, _ZNSt6__ndk1*, etc.)
  */
 export function filterCppLinkerTrapSymbol(
   name: string,
@@ -157,57 +168,64 @@ export function filterCppLinkerTrapSymbol(
     return { trapped: true, trapKind: "ndk_cpp_runtime_reexport" };
   }
   if (
-    /^(_ZTISt|_ZTSSt|_ZTVNSt|_ZTTNSt)/u.test(name) ||
+    /^(_ZTISt|_ZTSSt|_ZTVNSt|_ZTTNSt|_ZTINSt3__1|_ZTSNSt3__1|_ZTVNSt3__1|_ZTTNSt3__1|_ZTINSt6__ndk1|_ZTSNSt6__ndk1|_ZTVNSt6__ndk1|_ZTTNSt6__ndk1)/u.test(
+      name,
+    ) ||
     (isWeak && /^(_ZTI|_ZTS|_ZTV|_ZTT)/u.test(name))
   ) {
     return { trapped: true, trapKind: "weak_stl_typeinfo_or_vtable" };
   }
   if (
-    /^(NV12Scale|I420Scale|I420ToNV21|ARGBToNV21|NV21ToARGB|libyuv_)/u.test(
+    /^(NV12Scale|I420Scale|I420ToNV21|ARGBToNV21|NV21ToARGB|libyuv_|jpeg_Create|png_create_|inflateInit|deflateInit)/u.test(
       name,
     )
   ) {
     return { trapped: true, trapKind: "static_third_party_collision" };
   }
-  if (/^(ss_set_notify_callback|hal_notify_callback)$/u.test(name)) {
+  if (
+    /^(?:hal_notify_callback|set_notify_callback|register_hal_callback|notify_callback)$/u.test(
+      name,
+    )
+  ) {
     return { trapped: true, trapKind: "sibling_hal_callback_collision" };
+  }
+  if (
+    /^(_ZNSt3__1|_ZNKSt3__1|_ZNSt6__ndk1|_ZNKSt6__ndk1|_ZNSt\d|_ZNKSt\d)/u.test(
+      name,
+    ) ||
+    (isWeak && /^_ZN?K?St/u.test(name))
+  ) {
+    return { trapped: true, trapKind: "stl_template_method_collision" };
   }
   return { trapped: false, trapKind: null };
 }
 
 /**
  * Extracts valid shared-library dlopen targets from string literals while
- * rejecting Android system property strings (e.g. "ro.camera.sound.forced")
- * and diagnostic error prefixes ("Cannot dlopen ...", "dlopen failed ...").
+ * rejecting Android system property strings (e.g. "ro.camera.sound.forced"),
+ * non-library ".so.<word>" tokens, and diagnostic dlopen error messages.
  */
 export function extractValidDlopenLibraryTargets(
   strings: readonly { readonly value: string }[],
 ): string[] {
   const targets = new Set<string>();
-  const tokenRegex = /\b([A-Za-z0-9_.\-@]+\.so(?:\.\d+)*)\b/gu;
+  const tokenRegex =
+    /(?:^|[\s"'(\x2f:;,=])([A-Za-z0-9_.\-@]+\.so(?:\.\d+)*)(?![A-Za-z0-9_.-])/gu;
+  const sysPropPrefixRegex = /^(?:ro|persist|sys|vendor|dalvik|debug)\./iu;
+  const diagnosticLogRegex =
+    /(?:cannot\s+dlopen\b|dlopen\s+failed|failed\s+to\s+dlopen\b|unable\s+to\s+dlopen\b)/iu;
 
   for (const entry of strings) {
     const val = entry.value.trim();
     if (val.length === 0) continue;
-    const lower = val.toLowerCase();
-    if (
-      val.startsWith("ro.") ||
-      val.startsWith("persist.") ||
-      val.startsWith("sys.") ||
-      lower.startsWith("cannot dlopen ") ||
-      lower.startsWith("dlopen failed")
-    ) {
+    if (sysPropPrefixRegex.test(val) || diagnosticLogRegex.test(val)) {
       continue;
     }
     tokenRegex.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = tokenRegex.exec(val)) !== null) {
       const candidate = match[1]!;
-      if (
-        candidate.startsWith("ro.") ||
-        candidate.startsWith("persist.") ||
-        candidate.startsWith("sys.")
-      ) {
+      if (sysPropPrefixRegex.test(candidate) || candidate === ".so") {
         continue;
       }
       targets.add(candidate);
@@ -245,18 +263,20 @@ export function recoverJniRegisterNativesMethods(
   vaddrToFileOffset: (vaddr: bigint) => number | null,
   dataRanges: readonly { readonly fileOffset: number; readonly fileSize: number }[],
   executableRanges: readonly { readonly start: bigint; readonly end: bigint }[],
+  relocatedPtrAtFileOffset?: (fileOffset: number) => bigint | null,
 ): RecoveredJniMethod[] {
   const ptrSize = is64Bit ? 8 : 4;
   const entrySize = ptrSize * 3;
   const readPtr = (off: number): bigint => {
-    if (is64Bit) {
-      return littleEndian
+    const raw = is64Bit
+      ? littleEndian
         ? bytes.readBigUInt64LE(off)
-        : bytes.readBigUInt64BE(off);
-    }
-    return BigInt(
-      littleEndian ? bytes.readUInt32LE(off) : bytes.readUInt32BE(off),
-    );
+        : bytes.readBigUInt64BE(off)
+      : BigInt(
+          littleEndian ? bytes.readUInt32LE(off) : bytes.readUInt32BE(off),
+        );
+    if (raw !== 0n) return raw;
+    return relocatedPtrAtFileOffset?.(off) ?? 0n;
   };
 
   const nameRegex = /^[A-Za-z_][A-Za-z0-9_]{1,127}$/u;

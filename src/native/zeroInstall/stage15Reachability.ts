@@ -46,8 +46,13 @@ export interface Stage15ModelView extends HazardModelContext {
   readonly elfLinkerMetrics?: Stage15ElfLinkerMetrics;
 }
 
-const KNOWN_PLUGIN_FACTORY_PATTERN =
-  /^(?:create|init|get|HumanTracking|SRIBEngine|HMI|initializeLib|processEvent|compute_)/iu;
+const KNOWN_PLUGIN_DISPATCH_EXPORTS = new Set([
+  "hal_module_info",
+  "plugin_init",
+  "plugin_create",
+  "plugin_register",
+  "plugin_entry",
+]);
 
 const KNOWN_ROOT_ENTRY_NAMES = new Set([
   "main",
@@ -56,6 +61,47 @@ const KNOWN_ROOT_ENTRY_NAMES = new Set([
   "wmain",
   "WinMain",
 ]);
+
+const NON_ALGORITHMIC_GLOBAL_HAZARDS = new Set<LatentBinaryHazardCategory>([
+  "thread_hostile_mutable_global",
+  "uninitialized_or_stack_hazard",
+]);
+
+const modelDlopenTargetsCache = new WeakMap<
+  Stage15ModelView,
+  readonly string[]
+>();
+
+function getCachedDlopenTargets(model: Stage15ModelView): readonly string[] {
+  const cached = modelDlopenTargetsCache.get(model);
+  if (cached !== undefined) return cached;
+  const computed = extractValidDlopenLibraryTargets(model.strings);
+  modelDlopenTargetsCache.set(model, computed);
+  return computed;
+}
+
+function isLiveWiredRootOrCallee(
+  proc: Stage15ProcedureRef,
+  model: Stage15ModelView,
+): boolean {
+  if (proc.callers.size > 0) return true;
+  if (proc.address === model.entryPoint || KNOWN_ROOT_ENTRY_NAMES.has(proc.name)) {
+    return true;
+  }
+  if (proc.name.startsWith("Java_") || proc.name === "JNI_OnLoad") {
+    return true;
+  }
+  if (model.elfLinkerMetrics?.jniRegisteredAddresses.has(proc.address)) {
+    return true;
+  }
+  if (
+    model.rttiAnnotationsByAddr.has(proc.address) ||
+    /__vslot_\d+_/u.test(proc.name)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Classifies a procedure inside a subgraph according to the Stage 1.5
@@ -67,7 +113,8 @@ export function computeStage15NodeReachability(
   model: Stage15ModelView,
   nodeHazards: readonly LatentBinaryHazard[],
   allProcedures: readonly Stage15ProcedureRef[] = model.sortedProcedures,
-  activeHazardCategoriesCache?: Map<bigint, Set<LatentBinaryHazardCategory>>,
+  activeHighHazardCategoriesCache?: Map<bigint, Set<LatentBinaryHazardCategory>>,
+  activeAllHazardCategoriesCache?: Map<bigint, Set<LatentBinaryHazardCategory>>,
 ): Stage15NodeReachability {
   const callerCount = proc.callers.size;
   const sym = model.symbolsByAddr.get(proc.address);
@@ -98,14 +145,14 @@ export function computeStage15NodeReachability(
     linkageEdges.push("vtable_dispatch");
   }
 
-  const dlopenTargets = extractValidDlopenLibraryTargets(model.strings);
-  const isPluginFactoryEntry =
+  const dlopenTargets = getCachedDlopenTargets(model);
+  const isPluginDispatchEntry =
     isExported &&
     !isJniJavaExport &&
-    (dlopenTargets.length > 0 || KNOWN_PLUGIN_FACTORY_PATTERN.test(proc.name)) &&
-    KNOWN_PLUGIN_FACTORY_PATTERN.test(proc.name);
+    dlopenTargets.length > 0 &&
+    KNOWN_PLUGIN_DISPATCH_EXPORTS.has(proc.name);
 
-  if (isPluginFactoryEntry) {
+  if (isPluginDispatchEntry) {
     linkageEdges.push("dlopen_plugin_entry");
   } else if (isExported && !isJniJavaExport) {
     linkageEdges.push("dynsym_export");
@@ -121,7 +168,7 @@ export function computeStage15NodeReachability(
     isJniJavaExport ||
     isJniRegisterNatives ||
     isVtableDispatch ||
-    isPluginFactoryEntry;
+    isPluginDispatchEntry;
 
   if (hasLiveEntryEdge) {
     return {
@@ -140,19 +187,60 @@ export function computeStage15NodeReachability(
 
   let isClonedInlineSuspect = false;
   if (nodeHazards.length > 0) {
-    const nodeCategories = new Set(nodeHazards.map((h) => h.category));
+    const nodeAllCategories = new Set(nodeHazards.map((h) => h.category));
+    const nodeHighAlgoCategories = new Set(
+      nodeHazards
+        .filter(
+          (h) =>
+            h.severity === "high" &&
+            !NON_ALGORITHMIC_GLOBAL_HAZARDS.has(h.category),
+        )
+        .map((h) => h.category),
+    );
+
     for (const other of allProcedures) {
-      if (other.address === proc.address || other.callers.size === 0) continue;
-      let otherCategories = activeHazardCategoriesCache?.get(other.address);
-      if (otherCategories === undefined) {
-        const otherHazards = extractLatentBinaryHazards(other, model);
-        otherCategories = new Set(otherHazards.map((h) => h.category));
-        activeHazardCategoriesCache?.set(other.address, otherCategories);
+      if (
+        other.address === proc.address ||
+        other.thunk ||
+        !isLiveWiredRootOrCallee(other, model)
+      ) {
+        continue;
       }
-      for (const cat of nodeCategories) {
-        if (otherCategories.has(cat)) {
+
+      let otherAllCats = activeAllHazardCategoriesCache?.get(other.address);
+      let otherHighCats = activeHighHazardCategoriesCache?.get(other.address);
+      if (otherAllCats === undefined || otherHighCats === undefined) {
+        const otherHazards = extractLatentBinaryHazards(other, model);
+        otherAllCats = new Set(otherHazards.map((h) => h.category));
+        otherHighCats = new Set(
+          otherHazards
+            .filter(
+              (h) =>
+                h.severity === "high" &&
+                !NON_ALGORITHMIC_GLOBAL_HAZARDS.has(h.category),
+            )
+            .map((h) => h.category),
+        );
+        activeAllHazardCategoriesCache?.set(other.address, otherAllCats);
+        activeHighHazardCategoriesCache?.set(other.address, otherHighCats);
+      }
+
+      for (const highCat of nodeHighAlgoCategories) {
+        if (otherHighCats.has(highCat)) {
           isClonedInlineSuspect = true;
           break;
+        }
+      }
+      if (isClonedInlineSuspect) break;
+
+      let sharedCategoryCount = 0;
+      for (const cat of nodeAllCategories) {
+        if (otherAllCats.has(cat)) {
+          sharedCategoryCount++;
+          if (sharedCategoryCount >= 2) {
+            isClonedInlineSuspect = true;
+            break;
+          }
         }
       }
       if (isClonedInlineSuspect) break;
@@ -194,7 +282,7 @@ export function computeLinkerHygieneSummary(
     definedDynsym > 0
       ? Math.round((globalDefault / definedDynsym) * 10_000) / 10_000
       : 0;
-  const dlopenTargets = extractValidDlopenLibraryTargets(model.strings);
+  const dlopenTargets = getCachedDlopenTargets(model);
 
   return {
     defined_dynsym_functions: definedDynsym,
@@ -205,7 +293,7 @@ export function computeLinkerHygieneSummary(
     relr_relocations_decoded: metrics?.relrRelocationsDecoded ?? 0,
     jni_registered_methods_recovered:
       metrics?.jniRegisteredMethodsRecovered ?? 0,
-    dlopen_targets: dlopenTargets,
+    dlopen_targets: [...dlopenTargets],
     filtered_cpp_linker_traps: metrics?.filteredCppLinkerTraps ?? 0,
     fvisibility_hidden_likely_omitted: definedDynsym >= 10 && ratio > 0.5,
   };

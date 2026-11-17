@@ -246,7 +246,7 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
     ]);
   });
 
-  it("recovers stripped LOCAL JNINativeMethod handlers from .data / .data.rel.ro", () => {
+  it("recovers stripped LOCAL JNINativeMethod handlers from .data (including RELA zeroed slots)", () => {
     const elf = buildMinimalElf64WithRelrAndJni();
     const methods = recoverJniRegisterNativesMethods(
       elf,
@@ -263,6 +263,27 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
         fnAddress: 0x220n,
       },
     ]);
+
+    // RELA case: on-disk pointers at 0x1000..0x1018 are 0, resolved via relative relocation addends
+    const relaElf = Buffer.from(elf);
+    relaElf.writeBigUInt64LE(0n, 0x1000);
+    relaElf.writeBigUInt64LE(0n, 0x1008);
+    relaElf.writeBigUInt64LE(0n, 0x1010);
+    const relaMap = new Map<number, bigint>([
+      [0x1000, 0x400n],
+      [0x1008, 0x420n],
+      [0x1010, 0x220n],
+    ]);
+    const relaMethods = recoverJniRegisterNativesMethods(
+      relaElf,
+      true,
+      true,
+      (vaddr) => Number(vaddr),
+      [{ fileOffset: 0x1000, fileSize: 0x40 }],
+      [{ start: 0x200n, end: 0x300n }],
+      (off) => relaMap.get(off) ?? null,
+    );
+    expect(relaMethods).toEqual(methods);
   });
 
   it("filters all 5 C++ linker-resolution trap classes and extracts valid dlopen .so targets", () => {
@@ -274,13 +295,21 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
       trapped: true,
       trapKind: "weak_stl_typeinfo_or_vtable",
     });
+    expect(filterCppLinkerTrapSymbol("_ZTINSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE", false)).toEqual({
+      trapped: true,
+      trapKind: "weak_stl_typeinfo_or_vtable",
+    });
     expect(filterCppLinkerTrapSymbol("NV12Scale", false)).toEqual({
       trapped: true,
       trapKind: "static_third_party_collision",
     });
-    expect(filterCppLinkerTrapSymbol("ss_set_notify_callback", false)).toEqual({
+    expect(filterCppLinkerTrapSymbol("hal_notify_callback", false)).toEqual({
       trapped: true,
       trapKind: "sibling_hal_callback_collision",
+    });
+    expect(filterCppLinkerTrapSymbol("_ZNSt3__112basic_stringIcE6appendEPKc", false)).toEqual({
+      trapped: true,
+      trapKind: "stl_template_method_collision",
     });
     expect(filterCppLinkerTrapSymbol("compute_blur_score", false)).toEqual({
       trapped: false,
@@ -290,8 +319,10 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
     const targets = extractValidDlopenLibraryTargets([
       { value: "ro.camera.sound.forced" },
       { value: "persist.vendor.audio.so.mode" },
+      { value: "sensor.so.mode" },
       { value: "Cannot dlopen libc.so: %s" },
-      { value: "dlopen failed for libmissing.so" },
+      { value: "[cam] dlopen failed for libmissing.so" },
+      { value: "Failed to dlopen libother.so" },
       { value: "libcamera_gyro.so" },
       { value: "/vendor/lib64/libblur_engine.so.1" },
     ]);
@@ -396,6 +427,81 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
     );
   });
 
+  it("avoids false positives on safe C/C++ codegen idioms across all detectors", () => {
+    const model = makeEmptyModel({
+      symbolsByAddr: new Map([
+        [0x110n, { name: "strlen", isFunction: true }],
+        [0x120n, { name: "memcpy", isFunction: true }],
+        [0x130n, { name: "_ZN6SampleD1Ev", isFunction: true }],
+        [0x140n, { name: "helper", isFunction: true }],
+      ]),
+    });
+
+    const safeProc: HazardProcedureRef = {
+      address: 0x2000n,
+      name: "submitFromString",
+      thunk: false,
+      instructions: [
+        // Safe FP mulss + stack frame access [rbp + 0x10]
+        makeInsn(0x2000n, "mulss", ["xmm0", "xmm1"]),
+        makeInsn(0x2004n, "mov", ["rax", "[rbp + 0x10]"]),
+        // Safe guarded fcmp before fdiv
+        makeInsn(0x2008n, "fcmp", ["d1", "#0.0"]),
+        makeInsn(0x200cn, "fdiv", ["d0", "d0", "d1"]),
+        // Safe pointer-chasing load overwriting x8 before cbz x8
+        makeInsn(0x2010n, "ldr", ["x8", "[x8]"]),
+        makeInsn(0x2014n, "cbz", ["x8", "0x2060"], {
+          isJump: true,
+          isConditionalJump: true,
+        }),
+        // Safe strlen return value check (rax clobbered by strlen)
+        makeInsn(0x2018n, "mov", ["rdi", "rax"]),
+        makeInsn(0x201cn, "call", ["0x110 <strlen>"], {
+          isCall: true,
+          targetAddress: 0x110n,
+        }),
+        makeInsn(0x2020n, "test", ["rax", "rax"]),
+        // Safe memcpy(dst, s, strlen(s) + 1) and constant mov edx, 64
+        makeInsn(0x2024n, "bl", ["0x110 <strlen>"], {
+          isCall: true,
+          targetAddress: 0x110n,
+        }),
+        makeInsn(0x2028n, "add", ["x2", "x0", "#1"]),
+        makeInsn(0x202cn, "mov", ["w2", "#64"]),
+        makeInsn(0x2030n, "bl", ["0x120 <memcpy>"], {
+          isCall: true,
+          targetAddress: 0x120n,
+        }),
+        // Safe post-indexed writeback on caller-saved x0 followed by call returning new x0
+        makeInsn(0x2034n, "ldr", ["x8", "[x0], #8"]),
+        makeInsn(0x2038n, "bl", ["0x140 <helper>"], {
+          isCall: true,
+          targetAddress: 0x140n,
+        }),
+        makeInsn(0x203cn, "ldr", ["x9", "[x0, #0x10]"]),
+        // Safe consecutive C++ destructor calls
+        makeInsn(0x2040n, "bl", ["0x130 <_ZN6SampleD1Ev>"], {
+          isCall: true,
+          targetAddress: 0x130n,
+        }),
+        makeInsn(0x2044n, "bl", ["0x130 <_ZN6SampleD1Ev>"], {
+          isCall: true,
+          targetAddress: 0x130n,
+        }),
+        // Zeroed stack at #0x10, unrelated call passing #0x20, then lsr #31 signbit extraction
+        makeInsn(0x2048n, "str", ["xzr", "[sp, #0x10]"]),
+        makeInsn(0x204cn, "add", ["x0", "sp", "#0x20"]),
+        makeInsn(0x2050n, "bl", ["0x140 <helper>"], {
+          isCall: true,
+          targetAddress: 0x140n,
+        }),
+        makeInsn(0x2054n, "lsr", ["w0", "w0", "#31"]),
+      ],
+    };
+
+    expect(extractLatentBinaryHazards(safeProc, model)).toEqual([]);
+  });
+
   it("classifies Stage 1.5 Class I live wired, Class II dead fossil, and Class II cloned-inline suspects", () => {
     const activeProc: Stage15ProcedureRef = {
       address: 0x1000n,
@@ -408,12 +514,12 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
     };
     const deadFossil: Stage15ProcedureRef = {
       address: 0x2000n,
-      name: "deadFilterHelper",
+      name: "getVersion",
       external: false,
       thunk: false,
       callers: new Set(),
       callees: new Set(),
-      instructions: [],
+      instructions: [makeInsn(0x2000n, "str", ["w1", "[x0]"], { targetAddress: 0x5010n })],
     };
     const clonedSuspect: Stage15ProcedureRef = {
       address: 0x3000n,
@@ -427,12 +533,13 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
 
     const stageModel: Stage15ModelView = {
       entryPoint: 0x900n,
-      segments: [],
+      segments: [{ start: 0x5000n, end: 0x6000n, writable: true }],
       gotSlotByAddr: new Map(),
       symbolsByAddr: new Map([
         [0x1000n, { name: "activeClonedDiv", isFunction: true, dynamic: true }],
-        [0x2000n, { name: "deadFilterHelper", isFunction: true, dynamic: true }],
+        [0x2000n, { name: "getVersion", isFunction: true, dynamic: true }],
         [0x3000n, { name: "legacyMatrixInverse", isFunction: true, dynamic: true }],
+        [0x5010n, { name: "g_state", isFunction: false, dynamic: false }],
       ]),
       proceduresByAddr: new Map([
         [0x1000n, activeProc],
@@ -463,10 +570,11 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
     expect(activeReach.classification).toBe("class_i_live_wired");
     expect(activeReach.linkage_edges).toContain("internal_call_chain");
 
+    // Unreferenced get* export with only a single non-algorithmic global reference remains dead fossil
     const fossilReach = computeStage15NodeReachability(
       deadFossil,
       stageModel,
-      [],
+      extractLatentBinaryHazards(deadFossil, stageModel),
     );
     expect(fossilReach.classification).toBe("class_ii_dead_fossil");
     expect(fossilReach.linkage_edges).toContain("unreferenced_export");

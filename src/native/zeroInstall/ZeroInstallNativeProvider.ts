@@ -1951,7 +1951,11 @@ class ZeroInstallSession {
     const stringMap = new Map(model.strings.map((s) => [s.address, s]));
     const aggregatedStringValues = new Map<string, string>();
     const aggregatedStringRefs = new Map<string, Set<string>>();
-    const activeHazardCategoriesCache = new Map<
+    const activeHighHazardCategoriesCache = new Map<
+      bigint,
+      Set<LatentBinaryHazardCategory>
+    >();
+    const activeAllHazardCategoriesCache = new Map<
       bigint,
       Set<LatentBinaryHazardCategory>
     >();
@@ -2015,7 +2019,8 @@ class ZeroInstallSession {
         model,
         latentHazards,
         model.sortedProcedures,
-        activeHazardCategoriesCache,
+        activeHighHazardCategoriesCache,
+        activeAllHazardCategoriesCache,
       );
 
       nodes.push({
@@ -3211,6 +3216,7 @@ function parseElfContainer(
 
   let relrRelocationsDecoded = 0;
   let intraBinaryPltStubs = 0;
+  const relativeRelocAddends = new Map<bigint, bigint>();
 
   for (const sec of rawSections) {
     const isRelr =
@@ -3253,6 +3259,14 @@ function parseElfContainer(
       const rType = is64Bit
         ? Number(rel.rInfo & 0xffffffffn)
         : Number(rel.rInfo & 0xffn);
+      if (
+        rSym === 0 &&
+        rel.rAddend > 0n &&
+        (rType === 1027 || rType === 8 || rType === 23)
+      ) {
+        relativeRelocAddends.set(rel.rOffset, rel.rAddend);
+        continue;
+      }
       if (rSym <= 0) continue;
       const sym = dynSymsByIndex.get(rSym);
       if (sym === undefined) continue;
@@ -3370,6 +3384,35 @@ function parseElfContainer(
       : parsedSections.filter((s) => s.executable)
   ).map((s) => ({ start: s.start, end: s.end }));
 
+  const fileOffsetToElfVaddr = (fileOff: number): bigint | null => {
+    for (const sec of parsedSections) {
+      if (
+        sec.fileSize > 0 &&
+        fileOff >= sec.fileOffset &&
+        fileOff < sec.fileOffset + sec.fileSize
+      ) {
+        return sec.start + BigInt(fileOff - sec.fileOffset);
+      }
+    }
+    for (const seg of segments) {
+      if (
+        seg.fileSize > 0 &&
+        fileOff >= seg.fileOffset &&
+        fileOff < seg.fileOffset + seg.fileSize
+      ) {
+        return seg.start + BigInt(fileOff - seg.fileOffset);
+      }
+    }
+    return null;
+  };
+
+  const relocatedPtrAtFileOffset = (fileOff: number): bigint | null => {
+    if (relativeRelocAddends.size === 0) return null;
+    const vaddr = fileOffsetToElfVaddr(fileOff);
+    if (vaddr === null) return null;
+    return relativeRelocAddends.get(vaddr) ?? null;
+  };
+
   const recoveredJni = recoverJniRegisterNativesMethods(
     bytes,
     is64Bit,
@@ -3377,6 +3420,7 @@ function parseElfContainer(
     vaddrToElfOffset,
     dataRanges,
     execRanges,
+    relocatedPtrAtFileOffset,
   );
   const jniRegisteredAddresses = new Set<bigint>();
   for (const method of recoveredJni) {
