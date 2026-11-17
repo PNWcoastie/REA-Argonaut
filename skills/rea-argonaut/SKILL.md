@@ -5,12 +5,12 @@ description: "Zero-G Reverse Engineering Anything & Verified Rust Reconstruction
 
 # REA-Argonaut (`ArgonZeroG` Engine)
 
-`REA-Argonaut` is the Zero-G reverse-engineering and verified reconstruction engine built for **Gemini 4 Argon** and **Google Antigravity 2.0**. It exposes **194 MCP tools** across **39 forensic domains** (`187` original REA tools + `7` `ArgonZeroG` engines) with unthrottled whole-subgraph extraction (`detail: "full"` by default), 2-tier cross-platform native resilience (Linux, macOS, Windows), a 4-subagent Hub-and-Spoke Super-Swarm, and closed-loop property-based C-to-Rust parity verification.
+`REA-Argonaut` is the Zero-G reverse-engineering and verified reconstruction engine built for **Gemini 4 Argon** and **Google Antigravity 2.0**. It exposes **194 MCP tools** across **39 forensic domains** (`187` original REA tools + `7` `ArgonZeroG` engines) with unpaginated whole-subgraph extraction (`decompile_subgraph`), 2-tier cross-platform native resilience (Linux, macOS, Windows), a 4-subagent Hub-and-Spoke Super-Swarm, and closed-loop property-based C-to-Rust parity verification.
 
 ## The 5 Core `ArgonZeroG` Operational Laws
 
 ### Law 1 — Whole-Subsystem Subgraph Caching Over Micro-Paging (`decompile_subgraph`)
-- **Never page 50 lines at a time.** Legacy 4K-context truncation (`detail: "summary"`, `max_lines: 50`) destroys cross-procedural type and invariant recovery and causes 18+ sequential MCP round-trips.
+- **Never page 50 lines at a time.** Legacy small-context micro-paging (`50` lines at a time) destroys cross-procedural type and invariant recovery and causes 18+ sequential MCP round-trips.
 - Always open the target and ingest the connected call subgraph in one turn so the entire subsystem resides in the Gemini 4 Argon prompt context cache:
   1. `open_binary({ path: "/abs/path/to/binary", provider_id: "auto" })` *(note: `provider: "auto"` is also accepted as an alias for `provider_id`)*
   2. `binary_overview({})` and `list_procedures({})` *(automatically seeds recovered C++ Itanium/MSVC RTTI virtual methods as `ClassName__vslot_N_<addr>` across stripped binaries)*
@@ -55,7 +55,7 @@ When analyzing multi-subsystem binaries, multi-artifact bundles, or porting C/C+
    - Never hardcode core counts, thread pool sizes, or machine-specific paths. All parallel workers scale dynamically at runtime via `os.availableParallelism()` and `os.totalmem()` in Node.js (`AdaptiveResourceProfile.ts`) and `std::thread::available_parallelism()` in Rust.
 4. **Bidirectional `rust-zero-drift` Bridge (Rust `1.100+` / `edition = "2024"`)**:
    - **Inbound (`rea-argonaut` $\to$ `rust-zero-drift`)**: Reconstructed C/C++ subsystems scaffold into `edition = "2024"` (`rust-version = "1.100"`) crates enforcing `#[repr(transparent)]` Newtypes, `PhantomData<State>` Typestates, const-generic capacities, `core::mem::DropGuard`, `std::sync::LazyLock`/`OnceLock`, `[lints.rust] unsafe_code = "forbid"`, `[lints.cargo] unused_dependencies = "warn"`, and strict `[lints.clippy]` rules (`unwrap_used`, `expect_used`, `todo`, `unimplemented`, `dbg_macro` = `"deny"`).
-   - **Outbound (`rust-zero-drift` $\to$ `rea-argonaut`)**: Native Rust projects invoke `adversarial-parity-auditor` (`verify_rust_parity` in `c_source_code` mode) to differentially fuzz optimized SIMD/DSP/crypto kernels across `10,064` SplitMix64 + boundary vectors, and invoke `subgraph-architect` (`inspect_rust_cpp_binary` `zero_drift_audit` + `decompile_subgraph`) on compiled release binaries to audit surviving `crate_panic_locations` and `-sys` FFI `unsafe_c_memory_sinks_imported`.
+   - **Outbound (`rust-zero-drift` $\to$ `rea-argonaut`)**: Native Rust projects invoke `adversarial-parity-auditor` (`verify_rust_parity` in `c_source_code` mode) to differentially fuzz optimized SIMD/DSP/crypto kernels across `10,000+` (`10,000` SplitMix64 + up to `64` boundary cases) vectors, and invoke `subgraph-architect` (`inspect_rust_cpp_binary` `zero_drift_audit` + `decompile_subgraph`) on compiled release binaries to audit surviving `crate_panic_locations` and `-sys` FFI `unsafe_c_memory_sinks_imported`.
 
 ### Law 5 — Closed-Loop Mathematical Verification (`verify_rust_parity`)
 - **Never claim a C/C++-to-Rust reconstruction is equivalent by visual inspection alone.**
@@ -83,7 +83,7 @@ When reverse-engineering complex native binaries, packaged UI archives, firmware
 - **Phase 3 — Antigravity + Gemini 4 Argon Reconstruction:**
   Hand off to **Antigravity + Gemini 4 Argon** to build/recreate the selected library, application, UI, or hardware driver directly from `RECON_BLUEPRINT.md` and `recon-kit/` without re-running decompilers.
 - **Phase 4 — Mathematical Referee Verification:**
-  Run `verify_rust_parity` (scaffolds a clean `#![forbid(unsafe_code)]` Cargo crate by default via `scaffold_output_dir`, with `html_report_path` strictly opt-in) or CLI `argonaut verify-reconstruction` as the mathematical referee.
+  Run `verify_rust_parity` (pass optional `scaffold_output_dir` to scaffold a clean `#![forbid(unsafe_code)]` Cargo crate, with `html_report_path` strictly opt-in) or CLI `argonaut verify-rust-parity` (`verify-parity`) as the mathematical referee.
 
 ### Living Workspace Docs vs. Brain Artifacts & Native Decision Controls
 - **Native Decision Controls (`ask_question`):** All subsystem and harness choices use Antigravity's native `ask_question` tool; never generate HTML with clickable `<button>` or `onclick=` controls.
@@ -120,7 +120,7 @@ When reverse-engineering complex native binaries, packaged UI archives, firmware
 
 ### Stage 4 — Verification Scorecard & Opt-In Interactive HTML Dashboard
 1. Present the completed modernization summary in Markdown (and, when explicitly opted-in via `html_report_path` / `--html-report`, generate an interactive `generative_ui` HTML scorecard with `UserFacing: true`, `RequestFeedback: false`) that reports:
-   - **Headline KPIs:** Native Speedup (`speedup_vs_c_oracle`), `0 Unsafe` (`#![forbid(unsafe_code)]`), `100.0%` Bit-Exact Output Parity across `10,064` FFI test vectors, and MCP Round-Trip Collapse (`18 -> 1`, `-94.4%`).
+   - **Headline KPIs:** Native Speedup (`speedup_vs_c_oracle`), `0 Unsafe` (`#![forbid(unsafe_code)]`), `100.0%` Bit-Exact Output Parity across `10,000+` (`10,000` SplitMix64 + up to `64` boundary cases) FFI test vectors, and MCP Round-Trip Collapse (`18 -> 1`, `-94.4%`).
    - **Eliminated Hazard Matrix:** Side-by-side mapping of each Stage 1 `latent_hazard` address/procedure to the Stage 2 Safe Rust remediation and Stage 3 verification proof.
 
 ---

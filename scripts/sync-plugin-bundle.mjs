@@ -17,7 +17,7 @@ const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const CANONICAL_BUNDLE_ROOT = path.join(REPO_ROOT, "plugins", "rea-argonaut");
 
 const SYNC_FILES = ["plugin.json", "mcp_config.json"];
-const SYNC_DIRECTORIES = ["rules", "agents", "skills"];
+const SYNC_DIRECTORIES = ["rules", "agents", "skills", "assets"];
 
 function compareStrings(a, b) {
   if (a < b) return -1;

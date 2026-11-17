@@ -200,8 +200,9 @@ function compareLexicographically(a: string, b: string): number {
   return 0;
 }
 
-function collectMarkdownRelativePaths(
+function collectRelativeFilePaths(
   baseDir: string,
+  extension?: string,
   currentDir: string = baseDir,
 ): string[] {
   const entries = readdirSync(currentDir, { withFileTypes: true });
@@ -214,13 +215,13 @@ function collectMarkdownRelativePaths(
       entry.isDirectory() ||
       (entry.isSymbolicLink() && statSync(fullPath).isDirectory());
     if (isDirectory) {
-      results.push(...collectMarkdownRelativePaths(baseDir, fullPath));
+      results.push(...collectRelativeFilePaths(baseDir, extension, fullPath));
       continue;
     }
 
     const isFile =
       entry.isFile() || (entry.isSymbolicLink() && statSync(fullPath).isFile());
-    if (isFile && entry.name.endsWith(".md")) {
+    if (isFile && (extension === undefined || entry.name.endsWith(extension))) {
       results.push(path.relative(baseDir, fullPath).split(path.sep).join("/"));
     }
   }
@@ -247,7 +248,7 @@ function assertRootMatchesPluginFile(relPath: string): void {
   ).toBe(true);
 }
 
-function assertRootMatchesPluginMarkdownDir(relDir: string): void {
+function assertRootMatchesPluginDir(relDir: string, extension?: string): void {
   const rootDir = path.join(REPO_ROOT, relDir);
   const pluginDir = path.join(REPO_ROOT, "plugins/rea-argonaut", relDir);
 
@@ -265,19 +266,20 @@ function assertRootMatchesPluginMarkdownDir(relDir: string): void {
     `Expected plugin directory at plugins/rea-argonaut/${relDir}`,
   ).toBe(true);
 
-  const rootMarkdownFiles = collectMarkdownRelativePaths(rootDir);
-  const pluginMarkdownFiles = collectMarkdownRelativePaths(pluginDir);
+  const rootFiles = collectRelativeFilePaths(rootDir, extension);
+  const pluginFiles = collectRelativeFilePaths(pluginDir, extension);
 
+  const kindLabel = extension === undefined ? "file" : `${extension} file`;
   expect(
-    pluginMarkdownFiles.length,
-    `Expected at least one .md file in plugins/rea-argonaut/${relDir}`,
+    pluginFiles.length,
+    `Expected at least one ${kindLabel} in plugins/rea-argonaut/${relDir}`,
   ).toBeGreaterThan(0);
   expect(
-    rootMarkdownFiles,
-    `Markdown file list mismatch between ${relDir}/ and plugins/rea-argonaut/${relDir}/`,
-  ).toEqual(pluginMarkdownFiles);
+    rootFiles,
+    `File list mismatch between ${relDir}/ and plugins/rea-argonaut/${relDir}/`,
+  ).toEqual(pluginFiles);
 
-  for (const relFile of pluginMarkdownFiles) {
+  for (const relFile of pluginFiles) {
     assertRootMatchesPluginFile(path.posix.join(relDir, relFile));
   }
 }
@@ -307,29 +309,14 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
     });
 
     it("ensures ReconKitExporter.ts, RustParityVerifier.ts, and CrateScaffolder.ts contain zero :root or <button elements in HTML templates", () => {
-      const templateSources: ReadonlyArray<{
-        readonly relPath: string;
-        readonly optional: boolean;
-      }> = [
-        {
-          relPath: "src/artifacts/reconKit/ReconKitExporter.ts",
-          optional: false,
-        },
-        {
-          relPath: "src/native/rustParity/RustParityVerifier.ts",
-          optional: false,
-        },
-        {
-          relPath: "src/native/rustParity/CrateScaffolder.ts",
-          optional: true,
-        },
-      ];
+      const templateSources = [
+        "src/artifacts/reconKit/ReconKitExporter.ts",
+        "src/native/rustParity/RustParityVerifier.ts",
+        "src/native/rustParity/CrateScaffolder.ts",
+      ] as const;
 
-      for (const { relPath, optional } of templateSources) {
+      for (const relPath of templateSources) {
         const fullPath = path.join(REPO_ROOT, relPath);
-        if (optional && !existsSync(fullPath)) {
-          continue;
-        }
         expect(existsSync(fullPath), `${relPath} must exist`).toBe(true);
         const source = readFileSync(fullPath, "utf8");
         expect(
@@ -567,7 +554,7 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
       expect(Object.keys(pluginMcp.mcpServers)).toContain("rea-argonaut-mcp");
     });
 
-    it("enforces byte-for-byte parity between repository root and plugins/rea-argonaut/ across plugin.json, mcp_config.json, rules, skills, references, and agents", () => {
+    it("enforces byte-for-byte parity between repository root and plugins/rea-argonaut/ across plugin.json, mcp_config.json, rules, skills, references, agents, and assets", () => {
       const syncedFiles = [
         "plugin.json",
         "mcp_config.json",
@@ -579,8 +566,9 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
         assertRootMatchesPluginFile(relPath);
       }
 
-      assertRootMatchesPluginMarkdownDir("skills/rea-argonaut/references");
-      assertRootMatchesPluginMarkdownDir("agents");
+      assertRootMatchesPluginDir("skills/rea-argonaut/references", ".md");
+      assertRootMatchesPluginDir("agents", ".md");
+      assertRootMatchesPluginDir("assets");
     });
   });
 

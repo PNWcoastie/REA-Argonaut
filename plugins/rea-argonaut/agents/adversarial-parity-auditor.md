@@ -57,7 +57,7 @@ ______________________________________________________________________
    - Confirm:
      - `status === "verified_bit_exact"`
      - `memory_safety.forbid_unsafe_enforced === true` and `memory_safety.candidate_unsafe_blocks === 0`
-     - `benchmark_telemetry` (`benchmark_iterations` / `iterations_benchmarked`, `c_oracle_ns_per_call`, `safe_rust_ns_per_call`, `speedup_vs_c_oracle`)
+     - `benchmark_telemetry` (`benchmark_iterations`, `c_oracle_ns_per_call`, `safe_rust_ns_per_call`, `speedup_vs_c_oracle`)
      - `sandbox_telemetry` (`isolation_backend`, `cpu_limit_seconds`, `memory_limit_mb`, `wall_time_ms`)
      - `scaffolded_crate` (when `scaffold_output_dir` is provided: `output_dir`, `cargo_toml_path`, `lib_rs_path`, `regression_test_path`, `rust_edition: "2024"`, `zero_drift_lints_enforced: true`; `dashboard_html_path` is populated only when opt-in `html_report_path` is explicitly provided)
    - Synthesize the Stage 4 **Executive Verification Scorecard** (Markdown summary, plus opt-in `html_report_path` dashboard when requested) and report back to the lead orchestrator via `send_message`.

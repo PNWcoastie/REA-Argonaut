@@ -4,7 +4,7 @@ When the `rea-argonaut` plugin is enabled, adhere strictly to the following reve
 
 ## 1. Whole-Subgraph Extraction, Stage 1.5 Reachability & Hazard Auditing (`decompile_subgraph`)
 - Never page native disassembly or decompiled pseudocode 50 lines at a time.
-- Always ingest connected call subgraphs in a single call via `decompile_subgraph` (`detail: "full"`, `include_assembly: true`) to maximize KV context-cache reuse.
+- Always ingest connected call subgraphs in a single call via `decompile_subgraph` (`include_assembly: true`, `max_depth`, `max_nodes`) to maximize KV context-cache reuse.
 - On every `decompile_subgraph` response, inspect `inferred_struct_offsets`, **Stage 1.5 Reachability & Linker-Hygiene** (`stage15_reachability`: `class_i_live_wired`, `class_ii_dead_fossil`, `class_ii_cloned_inline_suspect`; `linker_hygiene`: `-fvisibility=hidden`/PLT bloat, `SHT_RELR` `.relr.dyn`, `RegisterNatives` recovery, 5 filtered C++ linker traps, valid `dlopen` `.so` targets), and **all 9 `latent_hazards` categories**:
   - `potential_integer_overflow_to_pointer`, `unchecked_division`, `thread_hostile_mutable_global`, `unsafe_memory_sink`, `uninitialized_or_stack_hazard`, `register_writeback_offset_clobber`, `null_deref_before_check`, `size_truncation_or_unsigned_underflow`, `unpopulated_out_param_or_duplicate_call`.
 - Audit cross-generation **Class III Zombie Activation** with `compare_artifacts` / `find_changed_behavior`, and audit compiled Rust binaries via `inspect_rust_cpp_binary` (`rust.zero_drift_audit`: `total_panic_locations`, `std_or_core_panic_locations`, `crate_panic_locations`, `detected_panic_handlers`, `unsafe_c_memory_sinks_imported`).
@@ -29,7 +29,7 @@ When the `rea-argonaut` plugin is enabled, adhere strictly to the following reve
 - **Phase 1 — Materialize the 4-Mount Recon Kit (`export_recon_kit`):** Produces `RECON_BLUEPRINT.md` and the 4-Mount `recon-kit/` directory (`0` unsolicited `.html` files by default; `mock_ui_concepts: false`).
 - **Phase 2 — Native `ask_question` Harness Selection (& Opt-In UI Concept Mock):** Always use Antigravity's native `ask_question` tool (never generate HTML with clickable `<button>` or `onclick=` controls) so the user selects which subsystem and which of the **4 Harnesses** (`verified-safe-rust-port`, `clean-room-app-ui-rebuild`, `hardware-hal-protocol-replay`, `security-hazard-audit`) to execute. If Mount 2 UI assets were discovered, include an option in `ask_question` asking if the user wants to generate a visual `generative_ui` UI concept mock (`mock_ui_concepts: true`).
 - **Phase 3 — Antigravity + Gemini 4 Argon Reconstruction:** Build/recreate from `RECON_BLUEPRINT.md` and `recon-kit/`.
-- **Phase 4 — Mathematical Referee Verification:** Run `verify_rust_parity` (scaffolds a clean `#![forbid(unsafe_code)]` Cargo crate by default via `scaffold_output_dir`, with `html_report_path` strictly opt-in) or CLI `argonaut verify-reconstruction`.
+- **Phase 4 — Mathematical Referee Verification:** Run `verify_rust_parity` (pass optional `scaffold_output_dir` to scaffold a clean `#![forbid(unsafe_code)]` Cargo crate, with `html_report_path` strictly opt-in) or CLI `argonaut verify-rust-parity` (`verify-parity`).
 
 ## 6. Living Workspace Docs vs. Brain Artifacts & Native Decision Controls
 - **Native Decision Controls (`ask_question`):** All architectural, subsystem, and harness routing choices must be presented via Antigravity's native `ask_question` tool. Never emit static HTML files containing fake interactive `<button>` or `onclick=` workflow controls.

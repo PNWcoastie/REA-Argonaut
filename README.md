@@ -34,11 +34,7 @@ Legacy MCP reverse-engineering servers were architected for small-context models
 - **Stage 1.5 Reachability, Linker-Hygiene & Zombie Auditing:** Classifies every procedure as `class_i_live_wired`, `class_ii_dead_fossil`, or `class_ii_cloned_inline_suspect`; scores `-fvisibility=hidden` & PLT bloat (`fvisibility_hidden_likely_omitted`, `intra_binary_plt_stubs`); decodes `SHT_RELR` (`.relr.dyn`) bitmaps; recovers stripped `LOCAL` JNI `RegisterNatives` (`JNINativeMethod`) tables; filters 5 C++ linker-resolution trap classes; extracts clean `dlopen` `.so` targets; and pairs with `compare_artifacts` / `find_changed_behavior` to catch cross-generation **Class III Zombie Activation**.
 - **9-Category `latent_hazards` Census:** Detects `potential_integer_overflow_to_pointer`, `unchecked_division`, `thread_hostile_mutable_global`, `unsafe_memory_sink`, `uninitialized_or_stack_hazard`, `register_writeback_offset_clobber`, `null_deref_before_check`, `size_truncation_or_unsigned_underflow`, and `unpopulated_out_param_or_duplicate_call`.
 - **95%+ Context-Cache Reuse:** Emits a topologically ordered, immutable subgraph representation so multi-turn agent reasoning and Rust reconstruction reuse cached KV prefixes instead of fragmenting context across dozens of micro-paginated tool calls.
-- **Raised `ArgonZeroG` Limits Across Canonical Tools:**
-  - `search_strings`: `max_preview_length` raised to **`2048`** (`default: 512`), `limit` raised to **`2000`** (`default: 250`).
-  - `procedure_pseudocode` / `analyze_function`: `max_lines` raised to **`5000`** (`default: 1000`, `detail: "full"` by default).
-  - `procedure_disassembly`: `max_instructions` raised to **`5000`** (`default: 1000`).
-  - `list_procedures` / `search_procedures` / `search_symbols` / `binary_overview`: `limit` raised to **`2500`** (`default: 500`).
+- **Unpaginated Canonical Tools & Bounded Subgraph Scaling:** Canonical native tools (`search_strings`, `search_procedures`, `list_procedures`, `procedure_pseudo_code`, `procedure_assembly`, `analyze_function`, `binary_overview`) return unpaginated deterministic provider results, while `decompile_subgraph` scales up to `max_depth: 10` (`default: 2`), `max_nodes: 100` (`default: 25`), and `include_assembly: true`.
 
 ### 2. `export_recon_kit` (Universal 4-Mount Recon Kit & Blueprint Exporter)
 - **4-Phase Recon-to-Argon Handoff:** Materializes `RECON_BLUEPRINT.md` and the structured 4-Mount `recon-kit/` workspace directory (`Mount 1: native-binary`, `Mount 2: packaged-ui-archive`, `Mount 3: hardware-firmware-protocol`, `Mount 4: ai-model-data`) in a single execution-free pass (`mock_ui_concepts: false` by default, producing zero unsolicited HTML files).
@@ -107,22 +103,21 @@ node dist/cli.js doctor
 node dist/cli.js export-recon-kit /path/to/target --output-dir ./recon-output
 
 # Single-call ArgonZeroG call-graph extraction
-node dist/cli.js open /path/to/binary --alias target
-node dist/cli.js decompile-subgraph --session target --entry 0x401120 --max-depth 3
+node dist/cli.js decompile-subgraph /path/to/binary 0x401120 --max-depth 3
 
 # Standalone forensic inspectors (no binary session required)
-node dist/cli.js inspect-rust-cpp-binary --path /path/to/stripped_rust_or_cpp_bin
-node dist/cli.js inspect-python-frozen-binary --path /path/to/pyinstaller_binary
-node dist/cli.js inspect-ai-model-artifact --path /path/to/model.gguf
-node dist/cli.js inspect-engine-archive --path /path/to/global-metadata.dat
+node dist/cli.js inspect-rust-cpp-binary /path/to/stripped_rust_or_cpp_bin
+node dist/cli.js inspect-python-frozen-binary /path/to/pyinstaller_binary
+node dist/cli.js inspect-ai-model-artifact /path/to/model.gguf
+node dist/cli.js inspect-engine-archive /path/to/global-metadata.dat
 
 # Closed-loop C vs. Rust FFI differential parity verification
 node dist/cli.js verify-rust-parity \
+  compute_tag \
+  '#[no_mangle] pub extern "C" fn compute_tag(a: u64, b: u32) -> u64 { ... }' \
   --target-binary-path /path/to/libtarget.so \
-  --symbol-name compute_tag \
   --arg-types u64,u32 \
   --return-type u64 \
-  --rust-source-code '#[no_mangle] pub extern "C" fn compute_tag(a: u64, b: u32) -> u64 { ... }' \
   --iterations 10000
 ```
 
