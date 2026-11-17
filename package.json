@@ -1,7 +1,7 @@
 {
   "name": "rea-argonaut",
   "mcpName": "io.github.morluto/rea-argonaut",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-G Reverse Engineering & Verified Rust Reconstruction for Gemini 4 Argon + Antigravity",
   "license": "MIT",
   "repository": {
@@ -75,7 +75,7 @@
     "@babel/parser": "8.0.4",
     "@babel/types": "8.0.4",
     "@clack/prompts": "1.7.0",
-    "@electron/asar": "4.2.0",
+    "@electron/asar": "4.3.2",
     "@jridgewell/trace-mapping": "0.3.31",
     "@lydell/node-pty": "1.1.0",
     "@modelcontextprotocol/client": "2.3.1",
@@ -108,11 +108,14 @@
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
     "yaml": "2.9.0",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "overrides": {
+    "fast-uri": "3.1.9",
+    "glob": "14.0.6",
+    "minimatch": "11.0.9",
     "vitepress": {
-      "vite": "6.4.4"
+      "vite": "6.4.6"
     }
   },
   "devDependencies": {
