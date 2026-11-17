@@ -2,7 +2,7 @@
 
 ## 1. Architectural Rationale: Collapsing 18+ RPC Round-Trips into 1
 
-Traditional reverse-engineering MCP servers were built for small-context models, forcing agents to issue one RPC per function (`analyze_function`, `procedure_pseudocode`, `procedure_callees`, `procedure_disassembly`) and micro-paging 50 lines at a time. That pattern incurs 18–50+ sequential tool calls for a single subsystem and fragments the prompt prefix so KV context caching cannot be reused.
+Traditional reverse-engineering MCP servers were built for small-context models, forcing agents to issue one RPC per function (`analyze_function`, `procedure_pseudo_code`, `procedure_callees`, `procedure_assembly`) and micro-paging 50 lines at a time. That pattern incurs 18–50+ sequential tool calls for a single subsystem and fragments the prompt prefix so KV context caching cannot be reused.
 
 `ArgonZeroG` replaces function-by-function micro-paging with **Single-Shot Whole-Subgraph Extraction (`decompile_subgraph`)** over the **2-Tier Native Engine**:
 - **Tier 1 (`ghidra` / `hopper` / `ida`)**: Headless Ghidra (`11.x` / `12.x`, verified on `12.1.4`) when `GHIDRA_INSTALL_DIR` (or `REA_GHIDRA_HOME`) and `JAVA_HOME` are configured, recovering HighFunction P-Code `PTRSUB`/`PTRADD` struct field displacements and symbolic pseudocode.
