@@ -68,6 +68,13 @@ export const verifyRustParityInputSchema = z
       .describe(
         "Candidate safe Rust source code defining pub fn <rust_fn_name>(...) or pub extern \"C\" fn <rust_fn_name>(...).",
       ),
+    remediated_rust_source_code: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional remediated Safe Rust source code (e.g., <fn>_remediated) to include alongside the bit-exact C-oracle reconstruction in the scaffolded Cargo crate.",
+      ),
     rust_fn_name: z
       .string()
       .min(1)
@@ -332,6 +339,18 @@ export const rustParityScaffoldedCrateSchema = z
       .default(null)
       .describe(
         "Absolute path to the optional Antigravity generative_ui-compliant HTML parity report when html_report_path is provided, or null when omitted.",
+      ),
+    rust_edition: z
+      .enum(["2024", "2021"])
+      .default("2024")
+      .describe(
+        "Rust edition targeted by the scaffolded Cargo crate (default '2024').",
+      ),
+    zero_drift_lints_enforced: z
+      .boolean()
+      .default(true)
+      .describe(
+        "True when [lints.rust], [lints.cargo], and [lints.clippy] zero-drift lints are configured in Cargo.toml.",
       ),
   })
   .strict();
