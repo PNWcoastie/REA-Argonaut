@@ -2,20 +2,24 @@
 
 When the `rea-argonaut` plugin is enabled, adhere strictly to the following reverse-engineering and verified Safe Rust modernization rules:
 
-## 1. Whole-Subgraph Extraction Over 50-Line Paging (`decompile_subgraph`)
+## 1. Whole-Subgraph Extraction, Stage 1.5 Reachability & Hazard Auditing (`decompile_subgraph`)
 - Never page native disassembly or decompiled pseudocode 50 lines at a time.
 - Always ingest connected call subgraphs in a single call via `decompile_subgraph` (`detail: "full"`, `include_assembly: true`) to maximize KV context-cache reuse.
-- On every `decompile_subgraph` response, inspect both `inferred_struct_offsets` and C/C++-to-Safe-Rust porting invariants in `latent_hazards` (`potential_integer_overflow_to_pointer`, `unchecked_division`, `thread_hostile_mutable_global`, `unsafe_memory_sink`, `uninitialized_or_stack_hazard`) before writing any reconstruction or architectural report.
+- On every `decompile_subgraph` response, inspect `inferred_struct_offsets`, **Stage 1.5 Reachability & Linker-Hygiene** (`stage15_reachability`: `class_i_live_wired`, `class_ii_dead_fossil`, `class_ii_cloned_inline_suspect`; `linker_hygiene`: `-fvisibility=hidden`/PLT bloat, `SHT_RELR` `.relr.dyn`, `RegisterNatives` recovery, 5 filtered C++ linker traps, valid `dlopen` `.so` targets), and **all 9 `latent_hazards` categories**:
+  - `potential_integer_overflow_to_pointer`, `unchecked_division`, `thread_hostile_mutable_global`, `unsafe_memory_sink`, `uninitialized_or_stack_hazard`, `register_writeback_offset_clobber`, `null_deref_before_check`, `size_truncation_or_unsigned_underflow`, `unpopulated_out_param_or_duplicate_call`.
+- Audit cross-generation **Class III Zombie Activation** with `compare_artifacts` / `find_changed_behavior`, and audit compiled Rust binaries via `inspect_rust_cpp_binary` (`rust.zero_drift_audit`: `total_panic_locations`, `std_or_core_panic_locations`, `crate_panic_locations`, `detected_panic_handlers`, `unsafe_c_memory_sinks_imported`).
 
-## 2. `#![forbid(unsafe_code)]` Safe Rust Reconstruction Standards
-- Every Rust module synthesized from a legacy C/C++ binary or source subsystem must declare `#![forbid(unsafe_code)]` at the crate/module root.
+## 2. `#![forbid(unsafe_code)]` Rust `1.100` (`edition = "2024"`) & `rust-zero-drift` Standards
+- Every Rust module synthesized from a legacy C/C++ binary or source subsystem must declare `#![forbid(unsafe_code)]` at the crate/module root and target `edition = "2024"` (`rust-version = "1.100"`) with `[lints.rust] unsafe_code = "forbid"`, `[lints.cargo] unused_dependencies = "warn"`, and `[lints.clippy]` denying `unwrap_used`, `expect_used`, `todo`, `unimplemented`, and `dbg_macro`.
 - Keep each Rust source file modular (`<= 400 LOC` per module), enforce zero warnings under `cargo clippy --all-targets -- -D warnings`, and document every public type, trait, and function with `///` rustdoc comments explaining the recovered domain invariant and eliminated legacy hazards.
-- Preserve strict IEEE-754 floating-point evaluation order and exact integer wrapping/widening semantics in the baseline port so `verify_rust_parity` can prove 0-ULP / bit-exact equivalence before layering Structure-of-Arrays (SoA), SIMD, or parallel rayon/thread-pool optimizations.
+- Apply **`rust-zero-drift`** patterns to eliminate all 9 hazard categories: `#[repr(transparent)]` Newtypes, `PhantomData<State>` Typestate lifecycles, const-generic array capacities, `core::mem::DropGuard` cleanup, `std::sync::LazyLock`/`OnceLock` (or `&mut Context`), `Option<&T>`/`Option<&[u8]>` null modeling, `usize` + `TryFrom` + `.checked_sub()`, and structured return tuples/`Result`.
+- Preserve strict IEEE-754 floating-point evaluation order and exact integer wrapping/widening semantics in the primary `<fn>` oracle port (`rust_source_code`) so `verify_rust_parity` proves 0-ULP bit-exact equivalence, and emit `<fn>_remediated` (`remediated_rust_source_code`) when legacy C/binary defects require hardened safe semantics.
 
-## 3. Mandatory Closed-Loop Parity & Speedup Verification (`verify_rust_parity`)
+## 3. Mandatory Closed-Loop Dual-Oracle Verification & `rust-zero-drift` Bridge (`verify_rust_parity`)
 - Never claim a C/C++-to-Rust port is equivalent by visual inspection alone.
-- Always execute `verify_rust_parity` with `forbid_unsafe: true` and `10,000+` deterministic SplitMix64 + boundary seeds (using `"f32_finite"` / `"f64_finite"` when testing finite-domain DSP/sensor filters, and relying on built-in canonical IEEE-754 `NaN` & `±0.0` equivalence).
-- If `status === "diverged"`, inspect `counterexample.shrunk_inputs`, `counterexample.c_return_hex`, `counterexample.rust_return_hex`, and `counterexample.bit_diff_summary`, patch the Rust implementation, and re-run `verify_rust_parity` until `status === "verified_bit_exact"` and `benchmark_telemetry.speedup_vs_c_oracle` is recorded.
+- Always execute `verify_rust_parity` with `forbid_unsafe: true` and `10,000+` deterministic SplitMix64 + boundary seeds (using `"f32_finite"` / `"f64_finite"` when testing finite-domain DSP/sensor filters, and relying on built-in canonical IEEE-754 `NaN` & `±0.0` equivalence). Pass `remediated_rust_source_code` alongside `rust_source_code` when scaffolding Dual-Oracle `edition = "2024"` crates via `scaffold_output_dir`, then verify `cargo clippy --all-targets -- -D warnings` and `cargo test`.
+- Bridge bidirectionally with `rust-zero-drift`: run `verify_rust_parity` (`c_source_code`) to differentially fuzz optimized Rust SIMD/crypto/DSP kernels, and run `inspect_rust_cpp_binary` (`zero_drift_audit`) on compiled release binaries to confirm zero crate panic bloat or unsafe `-sys` FFI sinks.
+- If `status === "diverged"`, inspect `counterexample.shrunk_inputs`, `counterexample.c_output_hex`, `counterexample.rust_output_hex`, and `counterexample.bit_diff_summary`, patch the Rust implementation, and re-run `verify_rust_parity` until `status === "verified_bit_exact"` and `benchmark_telemetry.speedup_vs_c_oracle` is recorded.
 
 ## 4. Hardware-Adaptive Concurrency (Zero Hardcoded Core Limits)
 - Never hardcode CPU core counts, worker thread counts, or single-OS path assumptions.

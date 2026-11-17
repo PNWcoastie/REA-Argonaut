@@ -194,6 +194,94 @@ function assertGenerativeUiCompliantHtml(html: string, label: string): void {
   ).toBe(false);
 }
 
+function compareLexicographically(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+function collectMarkdownRelativePaths(
+  baseDir: string,
+  currentDir: string = baseDir,
+): string[] {
+  const entries = readdirSync(currentDir, { withFileTypes: true });
+  entries.sort((a, b) => compareLexicographically(a.name, b.name));
+
+  const results: string[] = [];
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+    const isDirectory =
+      entry.isDirectory() ||
+      (entry.isSymbolicLink() && statSync(fullPath).isDirectory());
+    if (isDirectory) {
+      results.push(...collectMarkdownRelativePaths(baseDir, fullPath));
+      continue;
+    }
+
+    const isFile =
+      entry.isFile() || (entry.isSymbolicLink() && statSync(fullPath).isFile());
+    if (isFile && entry.name.endsWith(".md")) {
+      results.push(path.relative(baseDir, fullPath).split(path.sep).join("/"));
+    }
+  }
+
+  results.sort(compareLexicographically);
+  return results;
+}
+
+function assertRootMatchesPluginFile(relPath: string): void {
+  const rootPath = path.join(REPO_ROOT, relPath);
+  const pluginPath = path.join(REPO_ROOT, "plugins/rea-argonaut", relPath);
+
+  expect(existsSync(rootPath), `Missing root file: ${relPath}`).toBe(true);
+  expect(
+    existsSync(pluginPath),
+    `Missing canonical plugin file: plugins/rea-argonaut/${relPath}`,
+  ).toBe(true);
+
+  const rootBytes = readFileSync(rootPath);
+  const pluginBytes = readFileSync(pluginPath);
+  expect(
+    rootBytes.equals(pluginBytes),
+    `Byte-for-byte mismatch between ${relPath} and plugins/rea-argonaut/${relPath}`,
+  ).toBe(true);
+}
+
+function assertRootMatchesPluginMarkdownDir(relDir: string): void {
+  const rootDir = path.join(REPO_ROOT, relDir);
+  const pluginDir = path.join(REPO_ROOT, "plugins/rea-argonaut", relDir);
+
+  expect(existsSync(rootDir), `Missing root directory: ${relDir}`).toBe(true);
+  expect(
+    existsSync(pluginDir),
+    `Missing canonical plugin directory: plugins/rea-argonaut/${relDir}`,
+  ).toBe(true);
+  expect(
+    statSync(rootDir).isDirectory(),
+    `Expected root directory at ${relDir}`,
+  ).toBe(true);
+  expect(
+    statSync(pluginDir).isDirectory(),
+    `Expected plugin directory at plugins/rea-argonaut/${relDir}`,
+  ).toBe(true);
+
+  const rootMarkdownFiles = collectMarkdownRelativePaths(rootDir);
+  const pluginMarkdownFiles = collectMarkdownRelativePaths(pluginDir);
+
+  expect(
+    pluginMarkdownFiles.length,
+    `Expected at least one .md file in plugins/rea-argonaut/${relDir}`,
+  ).toBeGreaterThan(0);
+  expect(
+    rootMarkdownFiles,
+    `Markdown file list mismatch between ${relDir}/ and plugins/rea-argonaut/${relDir}/`,
+  ).toEqual(pluginMarkdownFiles);
+
+  for (const relFile of pluginMarkdownFiles) {
+    assertRootMatchesPluginFile(path.posix.join(relDir, relFile));
+  }
+}
+
 describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
   describe("Checkpoint 1 & 2 — Native Decision Controls & generative_ui Role Boundaries", () => {
     it("defaults mock_ui_concepts and include_explorer_html to false in exportReconKitInputSchema", () => {
@@ -218,21 +306,41 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
       assertGenerativeUiCompliantHtml(html, "EXECUTIVE_SCORECARD.html");
     });
 
-    it("ensures ReconKitExporter.ts and RustParityVerifier.ts contain zero :root or <button elements in HTML templates", () => {
-      const exporterSource = readFileSync(
-        path.join(REPO_ROOT, "src/artifacts/reconKit/ReconKitExporter.ts"),
-        "utf8",
-      );
-      const verifierSource = readFileSync(
-        path.join(REPO_ROOT, "src/native/rustParity/RustParityVerifier.ts"),
-        "utf8",
-      );
+    it("ensures ReconKitExporter.ts, RustParityVerifier.ts, and CrateScaffolder.ts contain zero :root or <button elements in HTML templates", () => {
+      const templateSources: ReadonlyArray<{
+        readonly relPath: string;
+        readonly optional: boolean;
+      }> = [
+        {
+          relPath: "src/artifacts/reconKit/ReconKitExporter.ts",
+          optional: false,
+        },
+        {
+          relPath: "src/native/rustParity/RustParityVerifier.ts",
+          optional: false,
+        },
+        {
+          relPath: "src/native/rustParity/CrateScaffolder.ts",
+          optional: true,
+        },
+      ];
 
-      expect(/:\s*root\b/i.test(exporterSource)).toBe(false);
-      expect(/<button\b/i.test(exporterSource)).toBe(false);
-
-      expect(/:\s*root\b/i.test(verifierSource)).toBe(false);
-      expect(/<button\b/i.test(verifierSource)).toBe(false);
+      for (const { relPath, optional } of templateSources) {
+        const fullPath = path.join(REPO_ROOT, relPath);
+        if (optional && !existsSync(fullPath)) {
+          continue;
+        }
+        expect(existsSync(fullPath), `${relPath} must exist`).toBe(true);
+        const source = readFileSync(fullPath, "utf8");
+        expect(
+          /:\s*root\b/i.test(source),
+          `${relPath} must not contain :root in HTML templates`,
+        ).toBe(false);
+        expect(
+          /<button\b/i.test(source),
+          `${relPath} must not contain <button elements in HTML templates`,
+        ).toBe(false);
+      }
     });
   });
 
@@ -457,6 +565,22 @@ describe("Antigravity 2.0 Native-Compliance 6-Pillar Audit Suite", () => {
         mcpServers: Record<string, unknown>;
       };
       expect(Object.keys(pluginMcp.mcpServers)).toContain("rea-argonaut-mcp");
+    });
+
+    it("enforces byte-for-byte parity between repository root and plugins/rea-argonaut/ across plugin.json, mcp_config.json, rules, skills, references, and agents", () => {
+      const syncedFiles = [
+        "plugin.json",
+        "mcp_config.json",
+        "rules/AGENTS.md",
+        "skills/rea-argonaut/SKILL.md",
+      ] as const;
+
+      for (const relPath of syncedFiles) {
+        assertRootMatchesPluginFile(relPath);
+      }
+
+      assertRootMatchesPluginMarkdownDir("skills/rea-argonaut/references");
+      assertRootMatchesPluginMarkdownDir("agents");
     });
   });
 
