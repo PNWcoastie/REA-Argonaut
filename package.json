@@ -68,7 +68,8 @@
     "showcase": "node examples/argon-zerog-showcase/run-showcase.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "sync:plugin": "node scripts/sync-plugin-bundle.mjs"
   },
   "dependencies": {
     "@babel/parser": "8.0.4",

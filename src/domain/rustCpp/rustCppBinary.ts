@@ -105,6 +105,18 @@ export const cppClassRecordSchema = z
 
 export type CppClassRecord = z.infer<typeof cppClassRecordSchema>;
 
+export const rustZeroDriftAuditSchema = z
+  .object({
+    total_panic_locations: z.number().int().nonnegative(),
+    std_or_core_panic_locations: z.number().int().nonnegative(),
+    crate_panic_locations: z.number().int().nonnegative(),
+    detected_panic_handlers: z.array(z.string()),
+    unsafe_c_memory_sinks_imported: z.array(z.string()),
+  })
+  .strict();
+
+export type RustZeroDriftAudit = z.infer<typeof rustZeroDriftAuditSchema>;
+
 export const rustCppBinarySchema = z
   .object({
     artifact: z
@@ -127,6 +139,7 @@ export const rustCppBinarySchema = z
         recovered_source_files: z.array(z.string().min(1)),
         panic_locations: z.array(rustPanicLocationSchema),
         demangled_symbols: z.array(demangledSymbolRecordSchema),
+        zero_drift_audit: rustZeroDriftAuditSchema.nullable().default(null),
       })
       .strict(),
     cpp: z

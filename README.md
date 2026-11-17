@@ -29,14 +29,12 @@ Legacy MCP reverse-engineering servers were architected for small-context models
 
 `REA-Argonaut` eliminates token-scarcity bottlenecks across six architectural pillars:
 
-### 1. `decompile_subgraph` (`ArgonZeroG` Subgraph Batch Engine)
-- **Single-Call Call-Graph Extraction:** Traverses a target binary's call graph (`BFS` or `DFS`, cycle-safe up to `max_depth: 5` and `max_nodes: 256`) and returns an entire subsystem's **decompiled C pseudocode, disassembly, cross-references (XREFs), referenced string literals (`2048`-char previews), P-Code inferred struct field offsets (`inferred_struct_offsets`), and latent binary hazards (`latent_hazards`)** in one deterministic JSON payload.
+### 1. `decompile_subgraph` (`ArgonZeroG` Subgraph Batch Engine & Stage 1.5 Reachability)
+- **Single-Call Call-Graph Extraction:** Traverses a target binary's call graph (`BFS` or `DFS`, cycle-safe up to `max_depth: 10` and `max_nodes: 100`) and returns an entire subsystem's **decompiled C pseudocode, disassembly, cross-references (XREFs), referenced string literals (`2048`-char previews), P-Code inferred struct field offsets (`inferred_struct_offsets`), all 9 `latent_hazards` categories, Stage 1.5 multi-edge reachability (`stage15_reachability`), and binary-wide linker hygiene (`linker_hygiene`)** in one deterministic JSON payload.
+- **Stage 1.5 Reachability, Linker-Hygiene & Zombie Auditing:** Classifies every procedure as `class_i_live_wired`, `class_ii_dead_fossil`, or `class_ii_cloned_inline_suspect`; scores `-fvisibility=hidden` & PLT bloat (`fvisibility_hidden_likely_omitted`, `intra_binary_plt_stubs`); decodes `SHT_RELR` (`.relr.dyn`) bitmaps; recovers stripped `LOCAL` JNI `RegisterNatives` (`JNINativeMethod`) tables; filters 5 C++ linker-resolution trap classes; extracts clean `dlopen` `.so` targets; and pairs with `compare_artifacts` / `find_changed_behavior` to catch cross-generation **Class III Zombie Activation**.
+- **9-Category `latent_hazards` Census:** Detects `potential_integer_overflow_to_pointer`, `unchecked_division`, `thread_hostile_mutable_global`, `unsafe_memory_sink`, `uninitialized_or_stack_hazard`, `register_writeback_offset_clobber`, `null_deref_before_check`, `size_truncation_or_unsigned_underflow`, and `unpopulated_out_param_or_duplicate_call`.
 - **95%+ Context-Cache Reuse:** Emits a topologically ordered, immutable subgraph representation so multi-turn agent reasoning and Rust reconstruction reuse cached KV prefixes instead of fragmenting context across dozens of micro-paginated tool calls.
-- **Raised `ArgonZeroG` Limits Across Canonical Tools:**
-  - `search_strings`: `max_preview_length` raised to **`2048`** (`default: 512`), `limit` raised to **`2000`** (`default: 250`).
-  - `procedure_pseudocode` / `analyze_function`: `max_lines` raised to **`5000`** (`default: 1000`, `detail: "full"` by default).
-  - `procedure_disassembly`: `max_instructions` raised to **`5000`** (`default: 1000`).
-  - `list_procedures` / `search_procedures` / `search_symbols` / `binary_overview`: `limit` raised to **`2500`** (`default: 500`).
+- **Unpaginated Canonical Tools & Bounded Subgraph Scaling:** Canonical native tools (`search_strings`, `search_procedures`, `list_procedures`, `procedure_pseudo_code`, `procedure_assembly`, `analyze_function`, `binary_overview`) return unpaginated deterministic provider results, while `decompile_subgraph` scales up to `max_depth: 10` (`default: 2`), `max_nodes: 100` (`default: 25`), and `include_assembly: true`.
 
 ### 2. `export_recon_kit` (Universal 4-Mount Recon Kit & Blueprint Exporter)
 - **4-Phase Recon-to-Argon Handoff:** Materializes `RECON_BLUEPRINT.md` and the structured 4-Mount `recon-kit/` workspace directory (`Mount 1: native-binary`, `Mount 2: packaged-ui-archive`, `Mount 3: hardware-firmware-protocol`, `Mount 4: ai-model-data`) in a single execution-free pass (`mock_ui_concepts: false` by default, producing zero unsolicited HTML files).
@@ -55,6 +53,7 @@ In addition to every original REA capability (JavaScript/Web bundles, Source Map
 
 - **`inspect_rust_cpp_binary` — Stripped Rust & Modern C++ Binary Forensics:**
   - Recovers crate names and exact versions from `.cargo/registry/src/...` paths and `core::panicking::Location` tuples even in `strip --strip-all` binaries.
+  - Emits **`rust.zero_drift_audit`** telemetry separating `std_or_core_panic_locations` from `crate_panic_locations`, enumerating `detected_panic_handlers`, and flagging `unsafe_c_memory_sinks_imported` in `-sys` FFI binaries.
   - Native TypeScript **Rust `_RNv` v0** and **legacy `_ZN`** symbol demangler + **Itanium (`_Z`)** and **MSVC (`?`)** C++ demangler.
   - Reconstructs **C++ VTables and RTTI (`typeinfo`)** across ELF (`SHT_RELA` PIE relocation resolution), Mach-O, and PE binaries without launching a heavy decompiler session.
 - **`inspect_python_frozen_binary` — Execution-Free Frozen Python Unpacker:**
@@ -70,7 +69,7 @@ In addition to every original REA capability (JavaScript/Web bundles, Source Map
 ### 5. Closed-Loop Sandboxed Rust Parity Verifier (`verify_rust_parity`)
 - **Automated Differential FFI Harness:** Compiles a C reference implementation (or loads an existing `.so` / `.dylib` / `.dll` via `dlopen`/`dlsym`) alongside a candidate `#![forbid(unsafe_code)]` Rust reconstruction (`rustc --crate-type cdylib`) and runs **`10,000+` SplitMix64 randomized + boundary test vectors** (`0`, `1`, `-1`, `MIN`, `MAX`, powers of two, bitmasks) in-process.
 - **Deterministic Counterexample Shrinking:** Automatically binary-searches any diverging input down to the minimal failing argument tuple (`counterexample.shrunk_inputs`, `bit_diff_summary`) so the agent can self-heal its Rust port in a closed loop.
-- **Clean Cargo Crate Scaffolding (`scaffold_output_dir`):** Scaffolds a 100% pure `#![forbid(unsafe_code)]` Rust Cargo crate (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default (`html_report_path` / `--html-report` is strictly opt-in).
+- **Rust `1.100` (`edition = "2024"`) Dual-Oracle Crate Scaffolding (`scaffold_output_dir`):** Scaffolds a 100% pure `#![forbid(unsafe_code)]` Rust `2024` Cargo crate (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) enforcing `rust-version = "1.100"`, `[lints.rust] unsafe_code = "forbid"`, `[lints.cargo] unused_dependencies = "warn"`, and strict `[lints.clippy]` rules (`unwrap_used`, `expect_used`, `todo`, `unimplemented`, `dbg_macro`) that pass `cargo clippy --all-targets -- -D warnings` and `cargo test` with zero HTML clutter by default (`html_report_path` / `--html-report` is strictly opt-in). Supports optional `remediated_rust_source_code` (`<fn>_remediated`) alongside the bit-exact `<fn>` C-oracle port, bridged bidirectionally with `rust-zero-drift` (`#[repr(transparent)]` Newtypes, `PhantomData` Typestate, const generics, `core::mem::DropGuard`, `std::sync::LazyLock`/`OnceLock`).
 - **OS-Native Sandboxed Execution:** Runs compiled harnesses inside isolated OS sandboxes:
   - **Linux:** `bwrap` (`bubblewrap` network-isolated namespace) + `prlimit` CPU/AS/NOFILE caps.
   - **macOS:** `/usr/bin/sandbox-exec` (`(deny network*)` Seatbelt profile) + `ulimit`.
@@ -104,22 +103,21 @@ node dist/cli.js doctor
 node dist/cli.js export-recon-kit /path/to/target --output-dir ./recon-output
 
 # Single-call ArgonZeroG call-graph extraction
-node dist/cli.js open /path/to/binary --alias target
-node dist/cli.js decompile-subgraph --session target --entry 0x401120 --max-depth 3
+node dist/cli.js decompile-subgraph /path/to/binary 0x401120 --max-depth 3
 
 # Standalone forensic inspectors (no binary session required)
-node dist/cli.js inspect-rust-cpp-binary --path /path/to/stripped_rust_or_cpp_bin
-node dist/cli.js inspect-python-frozen-binary --path /path/to/pyinstaller_binary
-node dist/cli.js inspect-ai-model-artifact --path /path/to/model.gguf
-node dist/cli.js inspect-engine-archive --path /path/to/global-metadata.dat
+node dist/cli.js inspect-rust-cpp-binary /path/to/stripped_rust_or_cpp_bin
+node dist/cli.js inspect-python-frozen-binary /path/to/pyinstaller_binary
+node dist/cli.js inspect-ai-model-artifact /path/to/model.gguf
+node dist/cli.js inspect-engine-archive /path/to/global-metadata.dat
 
 # Closed-loop C vs. Rust FFI differential parity verification
 node dist/cli.js verify-rust-parity \
+  compute_tag \
+  '#[no_mangle] pub extern "C" fn compute_tag(a: u64, b: u32) -> u64 { ... }' \
   --target-binary-path /path/to/libtarget.so \
-  --symbol-name compute_tag \
   --arg-types u64,u32 \
   --return-type u64 \
-  --rust-source-code '#[no_mangle] pub extern "C" fn compute_tag(a: u64, b: u32) -> u64 { ... }' \
   --iterations 10000
 ```
 
@@ -129,8 +127,9 @@ node dist/cli.js verify-rust-parity \
 
 ### First-Class Antigravity Plugin (`plugin.json` & `plugins/rea-argonaut/`)
 `REA-Argonaut` ships with a canonical [`plugins/rea-argonaut/plugin.json`](./plugins/rea-argonaut/plugin.json) (and root [`plugin.json`](./plugin.json)) manifest, rules, 4 swarm subagents, and bundled skills:
-- [`plugins/rea-argonaut/skills/rea-argonaut/SKILL.md`](./plugins/rea-argonaut/skills/rea-argonaut/SKILL.md) — `ArgonZeroG` 4-Phase Recon-to-Argon Handoff (`export_recon_kit`), Whole-Subgraph Batch Decompilation (`decompile_subgraph`), Stripped Rust/C++/PyInstaller/AI-Model/Engine-Archive Forensics, and Closed-Loop Rust Parity Verification (`verify_rust_parity`) playbooks.
-- [`plugins/rea-argonaut/rules/AGENTS.md`](./plugins/rea-argonaut/rules/AGENTS.md) — Always-on operational rules enforcing single-call `decompile_subgraph`, `#![forbid(unsafe_code)]` Safe Rust, `verify_rust_parity`, native `ask_question` decision controls, and living workspace docs vs. brain artifacts.
+- [`plugins/rea-argonaut/skills/rea-argonaut/SKILL.md`](./plugins/rea-argonaut/skills/rea-argonaut/SKILL.md) — `ArgonZeroG` 4-Phase Recon-to-Argon Handoff (`export_recon_kit`), Whole-Subgraph + Stage 1.5 Reachability & Linker-Hygiene Extraction (`decompile_subgraph`), 9-Category Hazard Modernization, Stripped Rust/C++ (`zero_drift_audit`)/PyInstaller/AI-Model/Engine-Archive Forensics, Dual-Oracle Rust `1.100` (`edition = "2024"`) Parity Verification (`verify_rust_parity`), and Bidirectional `rust-zero-drift` Bridge playbooks.
+- [`plugins/rea-argonaut/rules/AGENTS.md`](./plugins/rea-argonaut/rules/AGENTS.md) — Always-on operational rules enforcing single-call `decompile_subgraph` + Stage 1.5 auditing, `#![forbid(unsafe_code)]` Rust `2024` / `1.100` standards, Dual-Oracle `verify_rust_parity`, native `ask_question` decision controls, and living workspace docs vs. brain artifacts.
+- [`plugins/rea-argonaut/agents/`](./plugins/rea-argonaut/agents) — The 4 domain-locked Hub-and-Spoke swarm personas (`subgraph-architect`, `forensic-vertical-specialist`, `safe-rust-reconstructor`, `adversarial-parity-auditor`).
 
 ### `.gemini/settings.json` / MCP Configuration
 Copy [`.gemini/settings.json.example`](./.gemini/settings.json.example) to `.gemini/settings.json` (or register in your MCP client):
