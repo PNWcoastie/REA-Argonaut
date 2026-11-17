@@ -58,7 +58,7 @@ In addition to every original REA capability (JavaScript/Web bundles, Source Map
   - Reconstructs **C++ VTables and RTTI (`typeinfo`)** across ELF (`SHT_RELA` PIE relocation resolution), Mach-O, and PE binaries without launching a heavy decompiler session.
 - **`inspect_python_frozen_binary` — Execution-Free Frozen Python Unpacker:**
   - Pure-TypeScript parser for **PyInstaller (`MEI\x0c\x0b\x0a\x0b\x0e`)** CArchive trailers, `PYZ` zlib-compressed embedded module tables, and **PEP 552 `.pyc` code-object marshal streams**.
-  - Extracts Python version, entry-point scripts, bundled package manifests, `co_names`, `co_consts`, and string literals without executing untrusted bytecode.
+  - Extracts Python version, entry-point scripts, bundled package manifests, and `code_objects` (`co_name`, `names`, `varnames`, `string_constants`) without executing untrusted bytecode.
 - **`inspect_ai_model_artifact` — Zero-Copy Streaming AI Model Forensics:**
   - Constant-memory (`fs.open` + bounded `read()`) streaming inspector for **`GGUF` (v1–v3)**, **`SafeTensors`**, **`ONNX`**, and **`TFLite`** artifacts.
   - Extracts architecture hyperparameters, quantization distribution, tensor layouts, and **embedded Jinja `tokenizer.chat_template` / `system_prompt` strings** without loading multi-gigabyte weight buffers into RAM.
