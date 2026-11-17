@@ -82,13 +82,13 @@
     • Auto-detects Ghidra/IDA/Hopper or Zero-Install
   </text>
   <text x="70" y="392" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Extracts up to 50 connected functions in 1 call
+    • Extracts up to 100 connected functions in 1 call
   </text>
   <text x="70" y="410" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Recovers P-Code struct field offsets (this+0x14)
+    • Recovers P-Code struct offsets &amp; Stage 1.5 edges
   </text>
   <text x="70" y="428" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Pre-flags binary hazards (IDIV, overflow, sinks)
+    • Flags all 9 hazard classes &amp; linker-hygiene debt
   </text>
   <text x="70" y="450" fill="#7DD3FC" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600">
     → Replaces 18 micro-pages with 1 cached turn
@@ -141,16 +141,16 @@
     • Reads recon-kit/ types &amp; cached subgraph
   </text>
   <text x="502" y="392" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Eliminates every flagged binary hazard
+    • Eliminates all 9 binary hazard classes
   </text>
   <text x="502" y="410" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Synthesizes #![forbid(unsafe_code)] Safe Rust
+    • Synthesizes #![forbid(unsafe_code)] Rust 2024
   </text>
   <text x="502" y="428" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
     • Or rebuilds modern TypeScript / Web UI views
   </text>
   <text x="502" y="450" fill="#C7D2FE" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600">
-    → Zero raw pointers, zero unsafe blocks
+    → Dual-Oracle (&lt;fn&gt; + &lt;fn&gt;_remediated), 0 unsafe
   </text>
 
   <!-- Arrow Stage 2 -> Stage 3 -->
@@ -176,13 +176,13 @@
   <!-- Step 3A Box -->
   <rect x="918" y="200" width="348" height="120" rx="10" fill="#0F172A" stroke="#10B981" stroke-width="1.5"/>
   <text x="934" y="222" fill="#34D399" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="700">
-    3A. 10,064-Vector Differential Fuzzer
+    3A. 10,000+ Vector Differential Fuzzer
   </text>
   <text x="934" y="242" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
     • Loads original binary (.so/.dylib/.dll) in sandbox
   </text>
   <text x="934" y="260" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Runs 10,000 SplitMix64 + 64 boundary inputs
+    • 10,000 SplitMix64 + up to 64 boundary inputs
   </text>
   <text x="934" y="278" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
     • Compares C Oracle vs. Safe Rust bit-for-bit
@@ -206,10 +206,10 @@
     • Loops back to Stage 2 until 100% bit-exact
   </text>
   <text x="934" y="428" fill="#E2E8F0" font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    • Scaffolds pure Cargo crate (Cargo.toml + tests)
+    • Scaffolds Rust 1.100 (2024) zero-drift crate
   </text>
   <text x="934" y="450" fill="#6EE7B7" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600">
-    → Verified by cargo test on disk
+    → Verified by cargo clippy -D warnings &amp; test
   </text>
 
   <!-- Self-Healing Feedback Loop Arrow (Stage 3 back to Stage 2) -->

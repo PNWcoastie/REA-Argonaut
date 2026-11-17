@@ -2,7 +2,7 @@
 
 ## 1. Overview: Proving Bit-Exact Equivalence Without `unsafe`
 
-LLM-generated decompilation translations frequently introduce subtle integer overflow, sign-extension, shift-masking, or floating-point rounding bugs. `verify_rust_parity` eliminates guesswork by compiling the candidate Rust code with `#![forbid(unsafe_code)]` and executing property-based differential fuzzing (`10,000` SplitMix64 seeds + `64` deterministic boundary cases) against the original native C/C++ symbol inside an OS-level sandbox.
+LLM-generated decompilation translations frequently introduce subtle integer overflow, sign-extension, shift-masking, or floating-point rounding bugs. `verify_rust_parity` eliminates guesswork by compiling the candidate Rust code with `#![forbid(unsafe_code)]` and executing property-based differential fuzzing (`10,000` SplitMix64 seeds + up to `64` deterministic boundary cases) against the original native C/C++ symbol inside an OS-level sandbox.
 
 ---
 
@@ -62,9 +62,14 @@ When verifying a C/C++ function that mutates an output array, matrix, or struct 
 - Inside `verify_rust_parity` on the same host, both the C oracle and Safe Rust link the same system `libm`, so `sinf`, `cosf`, `atan2f`, `asinf`, `expf`, and `logf` match at `0 ULP` (`float_ulp_tolerance: 0`).
 - When cross-compiling standalone verification binaries across distinct C standard libraries (e.g., `x86_64-unknown-linux-gnu` `glibc` vs. `aarch64-unknown-linux-musl` `musl` or Android `Bionic`), `libm` polynomial approximations for transcendentals can differ by `1 ULP`. Link the same `libm` on both targets (e.g., `musl` on both `x86_64` and `aarch64`) for `0 ULP` digest identity, or set `float_ulp_tolerance: 1` for transcendental kernels.
 
-### Clean Cargo Crate Scaffolding (`scaffold_output_dir`) & Opt-In HTML Report (`html_report_path`)
-- **`scaffold_output_dir` *(optional)***: When provided and `status === "verified_bit_exact"`, `verify_rust_parity` scaffolds a **100% pure `#![forbid(unsafe_code)]` Rust Cargo crate** (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default.
-- **`html_report_path` *(optional, CLI `--html-report <path>`)* **: Explicit opt-in path. Only when `html_report_path` is provided does `verify_rust_parity` emit an Antigravity `generative_ui` HTML parity dashboard (`scaffolded_crate.dashboard_html_path`).
+### Dual-Oracle Cargo Crate Scaffolding (`scaffold_output_dir`) & Opt-In HTML Report (`html_report_path`)
+- **`scaffold_output_dir`** *(optional)*: When provided and `status === "verified_bit_exact"`, `verify_rust_parity` scaffolds a **100% pure `#![forbid(unsafe_code)]` Rust `1.100` (`edition = "2024"`) Cargo crate** (`Cargo.toml`, `src/lib.rs`, `tests/parity_regression.rs`) with zero HTML clutter by default:
+  - **`Cargo.toml` zero-drift lints**: Configures `edition = "2024"`, `rust-version = "1.100"`, `[lints.rust] unsafe_code = "forbid"`, `[lints.cargo] unused_dependencies = "warn"`, and `[lints.clippy]` denying `unwrap_used`, `expect_used`, `todo`, `unimplemented`, and `dbg_macro`.
+  - **`remediated_rust_source_code` Dual-Oracle Scaffolding (`<fn>` + `<fn>_remediated`)**: When optional `remediated_rust_source_code` is supplied alongside `rust_source_code`, `src/lib.rs` emits both the bit-exact `<fn>` C-oracle port and the defect-eliminated `<fn>_remediated` Safe Rust sibling (under `// --- Remediated Implementation (Defects Eliminated) ---`), injecting `argon_digest_*` helpers if referenced.
+  - **Attribute & ABI Normalization**: `CrateScaffolder` strips redundant crate-level `#![forbid(unsafe_code)]`, FFI `#[no_mangle]` / `#[unsafe(no_mangle)]` attributes, and `extern "C"` qualifiers from both `rust_source_code` and `remediated_rust_source_code` while preserving `pub fn` visibility and enforcing `#![forbid(unsafe_code)]` at the `src/lib.rs` crate root.
+  - **Clippy-Clean Regression Tests (`tests/parity_regression.rs`)**: Emits deterministic vector assertions using `assert!(...)` / `assert!(!...)` for `bool`, `.to_bits()` plus canonical `NaN` / `±0.0` bit checks for `f32`/`f64`, and `assert_eq!` for integers—ready for `cargo clippy --all-targets -- -D warnings` and `cargo test`.
+- **`html_report_path`** *(optional, CLI `--html-report <path>`)*: Explicit opt-in path. Only when `html_report_path` is provided does `verify_rust_parity` emit an Antigravity `generative_ui` HTML parity dashboard (`scaffolded_crate.dashboard_html_path`; otherwise `null`).
+- **`scaffolded_crate` Telemetry**: Returns `{ output_dir, cargo_toml_path, lib_rs_path, regression_test_path, dashboard_html_path, rust_edition: "2024", zero_drift_lints_enforced: true }` when `scaffold_output_dir` is supplied (or `null` otherwise).
 
 ---
 
@@ -80,15 +85,22 @@ Untrusted native C binaries are never executed directly in the MCP server proces
 
 ## 4. Telemetry & Counterexample Shrinker Output
 
-Every `verify_rust_parity` call returns structured JSON telemetry:
+Every `verify_rust_parity` call returns structured JSON telemetry (`rustParityReportSchema`):
 
 ```json
 {
   "status": "verified_bit_exact",
   "symbol_name": "rotl32",
   "rust_fn_name": "rotl32",
-  "iterations_completed": 10064,
+  "harness_mode": "native-rustc",
+  "arg_types": ["u32", "u32"],
+  "return_type": "u32",
+  "iterations_requested": 10000,
+  "iterations_completed": 10000,
+  "boundary_cases_tested": 17,
   "seed": 1337420,
+  "float_ulp_tolerance": 0,
+  "counterexample": null,
   "memory_safety": {
     "forbid_unsafe_enforced": true,
     "candidate_unsafe_blocks": 0
@@ -102,19 +114,32 @@ Every `verify_rust_parity` call returns structured JSON telemetry:
     "speedup_vs_c_oracle": 1.3
   },
   "sandbox_telemetry": {
+    "os_platform": "linux",
     "isolation_backend": "linux-bwrap+prlimit",
     "cpu_limit_seconds": 10,
     "memory_limit_mb": 512,
-    "wall_time_ms": 185
+    "wall_time_ms": 185,
+    "exit_code": 0,
+    "signal": null,
+    "timed_out": false,
+    "compiler_diagnostics": null
+  },
+  "scaffolded_crate": {
+    "output_dir": "/path/to/workspace/rotl32_rs",
+    "cargo_toml_path": "/path/to/workspace/rotl32_rs/Cargo.toml",
+    "lib_rs_path": "/path/to/workspace/rotl32_rs/src/lib.rs",
+    "regression_test_path": "/path/to/workspace/rotl32_rs/tests/parity_regression.rs",
+    "dashboard_html_path": null,
+    "rust_edition": "2024",
+    "zero_drift_lints_enforced": true
   }
 }
 ```
 
 ### Debugging `"diverged"` Counterexamples
 When a semantic discrepancy is detected (`status: "diverged"`), `verify_rust_parity` automatically runs its deterministic **Minimal Counterexample Shrinker** (coordinate-wise binary-searching scalar magnitudes toward `0` and truncating byte slices across `shrink_steps`) and populates `counterexample`:
-- `failing_iteration`: Index of the first diverging test vector.
-- `original_inputs`: The raw inputs that first triggered the mismatch.
-- `shrunk_inputs`: The minimal inputs that still reproduce the mismatch (e.g., `["0", "32"]` exposing an unmasked shift).
+- `failing_iteration`: 0-based index of the first diverging test vector (`iterations_completed` equals `failing_iteration + 1`).
+- `original_inputs` vs. `shrunk_inputs` (`shrink_steps`): Raw inputs that triggered the mismatch vs. minimal inputs that still reproduce it (e.g., `["0", "32"]` exposing an unmasked shift), plus the number of successful shrinking reductions.
 - `c_output` / `rust_output` & `c_output_hex` / `rust_output_hex`: Exact decimal and hex outputs.
-- `bit_diff_summary`: XOR bitmask and differing bit indices (e.g., `"XOR=0x80000000 (1 bit differs: [31]); sign bit mismatch"`).
-- `ulp_distance`: Exact Units in the Last Place distance for `f32`/`f64` outputs.
+- `bit_diff_summary`: XOR bitmask and differing bit indices (e.g., `"XOR diff = 0x80000000 (1 bit(s) differ, lowest bit = 31, highest bit = 31); C returned 0x80000000 (...), Rust returned 0x00000000 (...)"`).
+- `ulp_distance`: Exact Units in the Last Place distance for `f32`/`f64` outputs, or `null` for integer/boolean return types.

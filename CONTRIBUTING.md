@@ -10,7 +10,7 @@ Thank you for your interest in contributing to **REA-Argonaut**!
 2. **Hardware-Adaptive Concurrency:**
    - Never hardcode CPU core counts, thread limits, or machine-specific paths. Always scale via [`ADAPTIVE_RESOURCE_PROFILE`](src/config/AdaptiveResourceProfile.ts) (`os.availableParallelism()`, `os.totalmem()`).
 3. **`#![forbid(unsafe_code)]` Safe Rust Standard:**
-   - All reconstructed Rust code and parity templates must compile cleanly under `#![forbid(unsafe_code)]`.
+   - All reconstructed Rust code and parity templates must compile cleanly under `#![forbid(unsafe_code)]` targeting `edition = "2024"` (`rust-version = "1.100"`) with zero warnings under `cargo clippy --all-targets -- -D warnings`.
 
 ## Development & Verification Workflow
 
@@ -18,10 +18,14 @@ Thank you for your interest in contributing to **REA-Argonaut**!
 # 1. Install dependencies
 npm ci
 
-# 2. Build the TypeScript MCP server and CLI
+# 2. Sync canonical plugin bundle (plugins/rea-argonaut -> root mirrors) and verify parity
+npm run sync:plugin
+node scripts/sync-plugin-bundle.mjs --check
+
+# 3. Build the TypeScript MCP server and CLI
 npm run build
 
-# 3. Run the compliance and unit test suites
+# 4. Run the compliance and unit test suites
 npx vitest run src/contracts/antigravityCompliance.test.ts src/artifacts/reconKit/ReconKitExporter.test.ts
 ```
 
