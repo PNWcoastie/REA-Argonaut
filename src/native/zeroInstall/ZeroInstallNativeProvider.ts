@@ -33,10 +33,26 @@ import {
 } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import type { LatentBinaryHazardCategory } from "../../domain/native/nativeSubgraph.js";
 import type { RelationshipCoverage } from "../../domain/relationshipCoverage.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { Logger } from "pino";
 import { RustCppBinaryInspector } from "../rustCpp/RustCppBinaryInspector.js";
+import {
+  decodeAndroidAps2Relocations,
+  decodeElfRelrRelocations,
+  filterCppLinkerTrapSymbol,
+  recoverJniRegisterNativesMethods,
+  type RawElfRelocation,
+} from "./elfRelocations.js";
+import { extractLatentBinaryHazards } from "./latentHazards.js";
+import {
+  computeLinkerHygieneSummary,
+  computeStage15NodeReachability,
+  type Stage15ElfLinkerMetrics,
+} from "./stage15Reachability.js";
+
+export { decodeAndroidAps2Relocations, type RawElfRelocation };
 
 const execFileAsync = promisify(execFile);
 
@@ -230,6 +246,7 @@ interface BinaryAnalysisModel {
   readonly sortedProcedures: readonly ParsedProcedure[];
   readonly strings: readonly ParsedString[];
   readonly instructionsByAddr: Map<bigint, DecodedInsn>;
+  readonly elfLinkerMetrics?: Stage15ElfLinkerMetrics;
   readonly incomingRefsByTarget: Map<
     bigint,
     Array<{
@@ -1934,6 +1951,14 @@ class ZeroInstallSession {
     const stringMap = new Map(model.strings.map((s) => [s.address, s]));
     const aggregatedStringValues = new Map<string, string>();
     const aggregatedStringRefs = new Map<string, Set<string>>();
+    const activeHighHazardCategoriesCache = new Map<
+      bigint,
+      Set<LatentBinaryHazardCategory>
+    >();
+    const activeAllHazardCategoriesCache = new Map<
+      bigint,
+      Set<LatentBinaryHazardCategory>
+    >();
     let truncated = false;
 
     while (queue.length > 0) {
@@ -1988,7 +2013,15 @@ class ZeroInstallSession {
       }
 
       const inferredOffsets = this.#extractInferredStructOffsets(proc);
-      const latentHazards = this.#extractLatentBinaryHazards(proc, model);
+      const latentHazards = extractLatentBinaryHazards(proc, model);
+      const stage15Reachability = computeStage15NodeReachability(
+        proc,
+        model,
+        latentHazards,
+        model.sortedProcedures,
+        activeHighHazardCategoriesCache,
+        activeAllHazardCategoriesCache,
+      );
 
       nodes.push({
         procedure: {
@@ -2004,6 +2037,7 @@ class ZeroInstallSession {
         referenced_strings: nodeStrings,
         inferred_struct_offsets: inferredOffsets,
         latent_hazards: latentHazards,
+        stage15_reachability: stage15Reachability,
       });
 
       const nextItems: Array<{ readonly proc: ParsedProcedure; readonly depth: number }> = [];
@@ -2062,6 +2096,8 @@ class ZeroInstallSession {
         referenced_by: [...(aggregatedStringRefs.get(address) ?? [])].sort(),
       }));
 
+    const linkerHygiene = computeLinkerHygieneSummary(model);
+
     return ok({
       root_procedure: {
         address: toHex(rootProc.address),
@@ -2078,271 +2114,9 @@ class ZeroInstallSession {
       nodes,
       edges,
       aggregated_strings: aggregatedStrings,
+      linker_hygiene: linkerHygiene,
       limitations: [...BASE_LIMITATIONS],
     });
-  }
-
-  #extractLatentBinaryHazards(
-    proc: ParsedProcedure,
-    model: BinaryAnalysisModel,
-  ): Array<Readonly<Record<string, JsonValue>>> {
-    if (proc.thunk) {
-      return [];
-    }
-    const hazards = new Map<string, Readonly<Record<string, JsonValue>>>();
-    const recordHazard = (
-      category:
-        | "potential_integer_overflow_to_pointer"
-        | "unchecked_division"
-        | "thread_hostile_mutable_global"
-        | "unsafe_memory_sink"
-        | "uninitialized_or_stack_hazard",
-      severity: "high" | "medium" | "low",
-      address: string,
-      instructionOrOp: string,
-      description: string,
-    ) => {
-      const key = `${category}:${address}`;
-      if (!hazards.has(key)) {
-        hazards.set(key, {
-          category,
-          severity,
-          address,
-          instruction_or_op: instructionOrOp,
-          description,
-        });
-      }
-    };
-
-    const unsafeSinks = new Set([
-      "strcpy",
-      "strcat",
-      "sprintf",
-      "vsprintf",
-      "gets",
-      "scanf",
-      "__isoc99_scanf",
-      "system",
-      "popen",
-    ]);
-
-    const writableSegments = model.segments.filter((s) => s.writable);
-    const isWritableGlobalAddr = (addr: bigint): boolean =>
-      writableSegments.some((s) => addr >= s.start && addr < s.end);
-
-    const hasSignExtOrArrayIndex = proc.instructions.some((ins) => {
-      const m = ins.mnemonic.toLowerCase();
-      if (
-        m === "movsxd" ||
-        m === "movslq" ||
-        m === "cdqe" ||
-        m === "cltq" ||
-        m === "sxtw"
-      ) {
-        return true;
-      }
-      return ins.operands.some((op) => /\[.*[+*].*\]|\(.*,.*,.*\)/u.test(op));
-    });
-
-    for (let i = 0; i < proc.instructions.length; i++) {
-      const ins = proc.instructions[i]!;
-      const m = ins.mnemonic.toLowerCase();
-      const addrHex = toHex(ins.address);
-      const opsJoined = ins.operands.join(", ");
-      const rendered = `${addrHex}: ${ins.mnemonic}${opsJoined.length > 0 ? ` ${opsJoined}` : ""}`;
-      const lowerOps = opsJoined.toLowerCase();
-
-      // 1. potential_integer_overflow_to_pointer
-      const is32BitRegMention =
-        /\b(?:e[abcd]x|e[sd]i|r(?:8|9|1[0-5])d|w\d+)\b/u.test(lowerOps);
-      if (
-        (m.startsWith("imul") ||
-          m.startsWith("mul") ||
-          m === "madd" ||
-          (m.startsWith("shl") && hasSignExtOrArrayIndex)) &&
-        (is32BitRegMention || hasSignExtOrArrayIndex)
-      ) {
-        recordHazard(
-          "potential_integer_overflow_to_pointer",
-          "high",
-          addrHex,
-          rendered,
-          "32-bit integer multiplication/shift in a procedure with 64-bit sign-extension or pointer indexing can wrap before offset calculation; promote to usize/u64 and use checked_mul in Safe Rust.",
-        );
-      }
-
-      // 2. unchecked_division
-      if (
-        m === "div" ||
-        m === "idiv" ||
-        m === "divl" ||
-        m === "idivl" ||
-        m === "divq" ||
-        m === "idivq" ||
-        m === "udiv" ||
-        m === "sdiv" ||
-        m === "divss" ||
-        m === "divsd" ||
-        m === "fdiv"
-      ) {
-        let guarded = false;
-        for (let back = Math.max(0, i - 4); back < i; back++) {
-          const prevM = proc.instructions[back]!.mnemonic.toLowerCase();
-          if (
-            prevM.startsWith("test") ||
-            prevM.startsWith("cmp") ||
-            prevM.startsWith("cbz") ||
-            prevM.startsWith("cbnz") ||
-            prevM.startsWith("ucomi")
-          ) {
-            guarded = true;
-            break;
-          }
-        }
-        if (!guarded) {
-          recordHazard(
-            "unchecked_division",
-            "high",
-            addrHex,
-            rendered,
-            "Hardware division instruction without an adjacent zero-divisor check; use checked_div / checked_rem or explicit zero guards in Safe Rust.",
-          );
-        }
-      }
-
-      // 3. thread_hostile_mutable_global
-      const firstOpLower = (ins.operands[0] ?? "").toLowerCase();
-      const lastOpLower = (
-        ins.operands[ins.operands.length - 1] ?? ""
-      ).toLowerCase();
-      const isMutatingMnem =
-        m.startsWith("mov") ||
-        m.startsWith("add") ||
-        m.startsWith("sub") ||
-        m.startsWith("xor") ||
-        m.startsWith("or") ||
-        m.startsWith("and") ||
-        m.startsWith("inc") ||
-        m.startsWith("dec") ||
-        m.startsWith("str") ||
-        m.startsWith("stur") ||
-        m.startsWith("stp") ||
-        m.startsWith("xchg") ||
-        m.startsWith("cmpxchg");
-      const writesRipRelativeIntel =
-        isMutatingMnem &&
-        !m.startsWith("lea") &&
-        firstOpLower.includes("rip") &&
-        firstOpLower.includes("[");
-      const writesRipRelativeAtt =
-        isMutatingMnem &&
-        !m.startsWith("lea") &&
-        ins.operands.length >= 2 &&
-        lastOpLower.includes("(%rip)");
-      const gotBinding =
-        ins.targetAddress !== null
-          ? model.gotSlotByAddr.get(ins.targetAddress)
-          : undefined;
-      const accessesWritableGotGlobal =
-        gotBinding !== undefined &&
-        gotBinding.isWritableGlobal &&
-        !gotBinding.isFunction;
-      const writesGlobalTarget =
-        !m.startsWith("lea") &&
-        gotBinding?.isFunction !== true &&
-        ins.targetAddress !== null &&
-        isWritableGlobalAddr(ins.targetAddress) &&
-        ((isMutatingMnem &&
-          (firstOpLower.includes("rip") ||
-            lastOpLower.includes("(%rip)") ||
-            m.startsWith("add") ||
-            m.startsWith("sub") ||
-            m.startsWith("xor") ||
-            m.startsWith("or") ||
-            m.startsWith("and") ||
-            m.startsWith("inc") ||
-            m.startsWith("dec") ||
-            m.startsWith("str") ||
-            m.startsWith("stur") ||
-            m.startsWith("stp") ||
-            (m.startsWith("mov") &&
-              (firstOpLower.includes("[") || lastOpLower.includes("(%rip)"))))) ||
-          (m.startsWith("ldr") &&
-            model.symbolsByAddr.get(ins.targetAddress)?.isFunction === false));
-
-      if (
-        writesRipRelativeIntel ||
-        writesRipRelativeAtt ||
-        writesGlobalTarget ||
-        accessesWritableGotGlobal
-      ) {
-        const resolvedSym =
-          gotBinding?.symbolName ??
-          (ins.targetAddress !== null
-            ? model.symbolsByAddr.get(ins.targetAddress)?.name
-            : undefined);
-        const symClause =
-          resolvedSym !== undefined ? ` ('${resolvedSym}')` : "";
-        recordHazard(
-          "thread_hostile_mutable_global",
-          "medium",
-          addrHex,
-          rendered,
-          `Instruction accesses or mutates process-global state${symClause} in a writable data/BSS section without synchronization; move state into an explicit context struct or Atomic/Mutex in Safe Rust.`,
-        );
-      }
-
-      // 4. unsafe_memory_sink
-      if (ins.isCall && ins.targetAddress !== null) {
-        const rawCallee =
-          model.proceduresByAddr.get(ins.targetAddress)?.name ??
-          model.symbolsByAddr.get(ins.targetAddress)?.name ??
-          "";
-        const cleanCallee = rawCallee
-          .replace(/^_+/u, "")
-          .replace(/@plt$/u, "")
-          .toLowerCase();
-        if (unsafeSinks.has(cleanCallee)) {
-          recordHazard(
-            "unsafe_memory_sink",
-            "high",
-            addrHex,
-            rendered,
-            `Calls unbounded C sink '${cleanCallee}'; replace with bounds-checked Rust slice/String formatting.`,
-          );
-        }
-      }
-
-      // 5. uninitialized_or_stack_hazard
-      if (
-        m.startsWith("sub") &&
-        (firstOpLower === "rsp" ||
-          firstOpLower === "%rsp" ||
-          lastOpLower === "%rsp" ||
-          firstOpLower === "sp")
-      ) {
-        for (const op of ins.operands) {
-          const immMatch = op.match(/(?:0x([0-9a-fA-F]+)|(\d+))$/u);
-          if (immMatch !== null) {
-            const val =
-              immMatch[1] !== undefined
-                ? Number.parseInt(immMatch[1], 16)
-                : Number.parseInt(immMatch[2]!, 10);
-            if (!Number.isNaN(val) && val >= 4096) {
-              recordHazard(
-                "uninitialized_or_stack_hazard",
-                "medium",
-                addrHex,
-                rendered,
-                `Large stack frame allocation (${val} bytes); prefer heap-allocated Vec or bounded buffers in Safe Rust.`,
-              );
-            }
-          }
-        }
-      }
-    }
-
-    return [...hazards.values()];
   }
 
   #extractInferredStructOffsets(
@@ -2950,6 +2724,9 @@ async function buildBinaryAnalysisModel(
     sortedProcedures,
     strings,
     instructionsByAddr: parsedFormat.instructionsByAddr,
+    ...(parsedFormat.elfLinkerMetrics !== undefined
+      ? { elfLinkerMetrics: parsedFormat.elfLinkerMetrics }
+      : {}),
     incomingRefsByTarget,
     outgoingRefsBySource,
   };
@@ -3042,6 +2819,7 @@ interface MutableContainerParse {
   gotSlotByAddr: Map<bigint, GotSlotBinding>;
   instructionsByAddr: Map<bigint, DecodedInsn>;
   functionStartHints: Set<bigint>;
+  elfLinkerMetrics?: Stage15ElfLinkerMetrics;
 }
 
 function parseBinaryContainers(
@@ -3081,94 +2859,6 @@ function parseBinaryContainers(
     instructionsByAddr: new Map(),
     functionStartHints: new Set([base]),
   };
-}
-
-interface RawElfRelocation {
-  readonly rOffset: bigint;
-  readonly rInfo: bigint;
-  readonly rAddend: bigint;
-}
-
-/**
- * Unpacks Android Bionic APS2 SLEB128-packed relocation sections
- * (SHT_ANDROID_REL = 0x60000001 / SHT_ANDROID_RELA = 0x60000002, magic = "APS2").
- */
-export function decodeAndroidAps2Relocations(
-  secBytes: Uint8Array,
-): RawElfRelocation[] {
-  if (
-    secBytes.length < 4 ||
-    secBytes[0] !== 0x41 || // 'A'
-    secBytes[1] !== 0x50 || // 'P'
-    secBytes[2] !== 0x53 || // 'S'
-    secBytes[3] !== 0x32 // '2'
-  ) {
-    return [];
-  }
-  let pos = 4;
-  const readSleb128 = (): bigint => {
-    let result = 0n;
-    let shift = 0n;
-    let byte = 0;
-    while (pos < secBytes.length) {
-      byte = secBytes[pos++]!;
-      result |= BigInt(byte & 0x7f) << shift;
-      shift += 7n;
-      if ((byte & 0x80) === 0) break;
-    }
-    if (shift < 64n && (byte & 0x40) !== 0) {
-      result |= -1n << shift;
-    }
-    return BigInt.asIntN(64, result);
-  };
-
-  const totalRelocs = Number(readSleb128());
-  if (totalRelocs <= 0 || totalRelocs > 500_000) return [];
-  let rOffset = readSleb128();
-  let rAddend = 0n;
-  const relocs: RawElfRelocation[] = [];
-  let remaining = totalRelocs;
-
-  const GROUPED_BY_INFO = 1n;
-  const GROUPED_BY_OFFSET_DELTA = 2n;
-  const GROUPED_BY_ADDEND = 4n;
-  const GROUP_HAS_ADDEND = 8n;
-
-  while (remaining > 0 && pos < secBytes.length) {
-    const groupSize = Number(readSleb128());
-    if (groupSize <= 0 || groupSize > remaining) break;
-    const flags = readSleb128();
-    const groupedByInfo = (flags & GROUPED_BY_INFO) !== 0n;
-    const groupedByOffsetDelta = (flags & GROUPED_BY_OFFSET_DELTA) !== 0n;
-    const groupedByAddend = (flags & GROUPED_BY_ADDEND) !== 0n;
-    const hasAddend = (flags & GROUP_HAS_ADDEND) !== 0n;
-
-    const offsetDelta = groupedByOffsetDelta ? readSleb128() : 0n;
-    let rInfo = groupedByInfo ? readSleb128() : 0n;
-    if (hasAddend && groupedByAddend) {
-      rAddend += readSleb128();
-    } else if (!hasAddend) {
-      rAddend = 0n;
-    }
-
-    for (let i = 0; i < groupSize; i++) {
-      rOffset += groupedByOffsetDelta ? offsetDelta : readSleb128();
-      if (!groupedByInfo) {
-        rInfo = readSleb128();
-      }
-      if (hasAddend && !groupedByAddend) {
-        rAddend += readSleb128();
-      }
-      relocs.push({
-        rOffset: BigInt.asUintN(64, rOffset),
-        rInfo: BigInt.asUintN(64, rInfo),
-        rAddend,
-      });
-    }
-    remaining -= groupSize;
-  }
-
-  return relocs;
 }
 
 function parseElfContainer(
@@ -3376,6 +3066,11 @@ function parseElfContainer(
     readonly isObject: boolean;
   }
   const dynSymsByIndex = new Map<number, IndexedElfSymbol>();
+  let definedDynsymFunctions = 0;
+  let globalDefaultFunctions = 0;
+  let weakFunctions = 0;
+  let filteredCppLinkerTraps = 0;
+  const exportedFuncAddresses = new Set<bigint>();
 
   for (const sec of rawSections) {
     if (sec.shType !== 2 && sec.shType !== 11) continue; // SYMTAB / DYNSYM
@@ -3388,6 +3083,7 @@ function parseElfContainer(
       if (symOff + stride > bytes.length) break;
       const stName = readU32(symOff);
       const stInfo = is64Bit ? bytes[symOff + 4]! : bytes[symOff + 12]!;
+      const stOther = is64Bit ? bytes[symOff + 5]! : bytes[symOff + 13]!;
       const stShndx = is64Bit ? readU16(symOff + 6) : readU16(symOff + 14);
       const stValue = is64Bit ? readU64(symOff + 8) : BigInt(readU32(symOff + 4));
       const stSize = Number(
@@ -3395,10 +3091,29 @@ function parseElfContainer(
       );
       const name = readCString(strSec.shOffset, strSec.shSize, stName);
       if (!name || name.startsWith(".")) continue;
+      const stBind = stInfo >> 4;
       const stType = stInfo & 0xf;
+      const stVisibility = stOther & 0x3;
       const isFunc = stType === 2 || stType === 10; // STT_FUNC / STT_GNU_IFUNC
       const isObject = stType === 1 || stType === 6; // STT_OBJECT / STT_TLS
       if (sec.shType === 11) {
+        if (filterCppLinkerTrapSymbol(name, stBind === 2).trapped) {
+          filteredCppLinkerTraps++;
+        }
+        if (stShndx !== 0 && isFunc) {
+          definedDynsymFunctions++;
+          if (stBind === 1 && stVisibility === 0) {
+            globalDefaultFunctions++;
+            if (stValue > 0n) {
+              exportedFuncAddresses.add(stValue);
+            }
+          } else if (stBind === 2) {
+            weakFunctions++;
+            if (stVisibility === 0 && stValue > 0n) {
+              exportedFuncAddresses.add(stValue);
+            }
+          }
+        }
         dynSymsByIndex.set(i, {
           name,
           value: stValue,
@@ -3499,7 +3214,28 @@ function parseElfContainer(
     }
   }
 
+  let relrRelocationsDecoded = 0;
+  let intraBinaryPltStubs = 0;
+  const relativeRelocAddends = new Map<bigint, bigint>();
+
   for (const sec of rawSections) {
+    const isRelr =
+      sec.shType === 19 ||
+      sec.shType === 0x6fffff00 ||
+      sec.name === ".relr.dyn" ||
+      sec.name === ".relr";
+    if (
+      isRelr &&
+      sec.shOffset > 0 &&
+      sec.shSize > 0 &&
+      sec.shOffset + sec.shSize <= bytes.length
+    ) {
+      const secSlice = bytes.subarray(sec.shOffset, sec.shOffset + sec.shSize);
+      const relrAddrs = decodeElfRelrRelocations(secSlice, is64Bit, littleEndian);
+      relrRelocationsDecoded += relrAddrs.length;
+      continue;
+    }
+
     const isPltRel =
       sec.name === ".rela.plt" ||
       sec.name === ".rel.plt" ||
@@ -3523,11 +3259,20 @@ function parseElfContainer(
       const rType = is64Bit
         ? Number(rel.rInfo & 0xffffffffn)
         : Number(rel.rInfo & 0xffn);
+      if (
+        rSym === 0 &&
+        rel.rAddend > 0n &&
+        (rType === 1027 || rType === 8 || rType === 23)
+      ) {
+        relativeRelocAddends.set(rel.rOffset, rel.rAddend);
+        continue;
+      }
       if (rSym <= 0) continue;
       const sym = dynSymsByIndex.get(rSym);
       if (sym === undefined) continue;
 
       if (isPltRel || rType === 1026 || rType === 7) {
+        intraBinaryPltStubs++;
         // R_AARCH64_JUMP_SLOT (1026) / R_X86_64_JUMP_SLOT (7)
         let pltStubAddr = gotToPltStubAddr.get(rel.rOffset);
         if (pltStubAddr === undefined && pltSec !== undefined) {
@@ -3598,6 +3343,104 @@ function parseElfContainer(
     }
   }
 
+  const vaddrToElfOffset = (vaddr: bigint): number | null => {
+    for (const seg of segments) {
+      if (
+        seg.fileSize > 0 &&
+        vaddr >= seg.start &&
+        vaddr < seg.start + BigInt(seg.fileSize)
+      ) {
+        const off = seg.fileOffset + Number(vaddr - seg.start);
+        if (off >= 0 && off < bytes.length) return off;
+      }
+    }
+    for (const sec of parsedSections) {
+      if (
+        sec.fileSize > 0 &&
+        vaddr >= sec.start &&
+        vaddr < sec.start + BigInt(sec.fileSize)
+      ) {
+        const off = sec.fileOffset + Number(vaddr - sec.start);
+        if (off >= 0 && off < bytes.length) return off;
+      }
+    }
+    return null;
+  };
+
+  const dataRanges = parsedSections
+    .filter(
+      (s) =>
+        s.initialized &&
+        s.fileSize >= (is64Bit ? 24 : 12) &&
+        (s.writable ||
+          s.name === ".data" ||
+          s.name === ".data.rel.ro" ||
+          s.name === ".data.rel.ro.local"),
+    )
+    .map((s) => ({ fileOffset: s.fileOffset, fileSize: s.fileSize }));
+  const execRanges = (
+    segments.some((s) => s.executable)
+      ? segments.filter((s) => s.executable)
+      : parsedSections.filter((s) => s.executable)
+  ).map((s) => ({ start: s.start, end: s.end }));
+
+  const fileOffsetToElfVaddr = (fileOff: number): bigint | null => {
+    for (const sec of parsedSections) {
+      if (
+        sec.fileSize > 0 &&
+        fileOff >= sec.fileOffset &&
+        fileOff < sec.fileOffset + sec.fileSize
+      ) {
+        return sec.start + BigInt(fileOff - sec.fileOffset);
+      }
+    }
+    for (const seg of segments) {
+      if (
+        seg.fileSize > 0 &&
+        fileOff >= seg.fileOffset &&
+        fileOff < seg.fileOffset + seg.fileSize
+      ) {
+        return seg.start + BigInt(fileOff - seg.fileOffset);
+      }
+    }
+    return null;
+  };
+
+  const relocatedPtrAtFileOffset = (fileOff: number): bigint | null => {
+    if (relativeRelocAddends.size === 0) return null;
+    const vaddr = fileOffsetToElfVaddr(fileOff);
+    if (vaddr === null) return null;
+    return relativeRelocAddends.get(vaddr) ?? null;
+  };
+
+  const recoveredJni = recoverJniRegisterNativesMethods(
+    bytes,
+    is64Bit,
+    littleEndian,
+    vaddrToElfOffset,
+    dataRanges,
+    execRanges,
+    relocatedPtrAtFileOffset,
+  );
+  const jniRegisteredAddresses = new Set<bigint>();
+  for (const method of recoveredJni) {
+    jniRegisteredAddresses.add(method.fnAddress);
+    functionStartHints.add(method.fnAddress);
+    if (!symbolsByAddr.has(method.fnAddress)) {
+      symbolsByAddr.set(method.fnAddress, {
+        address: method.fnAddress,
+        name: method.methodName,
+        size: 0,
+        isFunction: true,
+        external: false,
+        dynamic: false,
+        thunk: false,
+        thunkTarget: null,
+        source: "analysis",
+      });
+    }
+  }
+
   const imageBase =
     segments.length > 0
       ? segments.reduce(
@@ -3617,6 +3460,17 @@ function parseElfContainer(
     gotSlotByAddr,
     instructionsByAddr: new Map(),
     functionStartHints,
+    elfLinkerMetrics: {
+      definedDynsymFunctions,
+      globalDefaultFunctions,
+      weakFunctions,
+      intraBinaryPltStubs,
+      relrRelocationsDecoded,
+      jniRegisteredMethodsRecovered: recoveredJni.length,
+      filteredCppLinkerTraps,
+      exportedFuncAddresses,
+      jniRegisteredAddresses,
+    },
   };
 }
 
@@ -5314,8 +5168,12 @@ function buildProceduresAndReferences(
               ) {
                 // If loading a pointer from .got into baseReg, propagate any bound global symbol address
                 const gotSlot = parsed.gotSlotByAddr.get(resolvedAddr);
-                if (gotSlot !== undefined && gotSlot.symbolValue > 0n) {
-                  adrpPageByReg.set(baseReg, gotSlot.symbolValue);
+                if (
+                  gotSlot !== undefined &&
+                  gotSlot.targetAddress > 0n &&
+                  gotSlot.targetAddress !== resolvedAddr
+                ) {
+                  adrpPageByReg.set(baseReg, gotSlot.targetAddress);
                 } else {
                   adrpPageByReg.delete(baseReg);
                 }

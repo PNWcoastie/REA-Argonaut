@@ -117,6 +117,10 @@ export const latentBinaryHazardCategorySchema = z
     "thread_hostile_mutable_global",
     "unsafe_memory_sink",
     "uninitialized_or_stack_hazard",
+    "register_writeback_offset_clobber",
+    "null_deref_before_check",
+    "size_truncation_or_unsigned_underflow",
+    "unpopulated_out_param_or_duplicate_call",
   ])
   .describe("Classification of a latent binary bug or undefined-behavior hazard.");
 
@@ -146,6 +150,56 @@ export const latentBinaryHazardSchema = z
   .strict();
 
 export type LatentBinaryHazard = z.infer<typeof latentBinaryHazardSchema>;
+
+export const stage15LinkageEdgeKindSchema = z.enum([
+  "dynsym_export",
+  "jni_java_export",
+  "jni_onload_register_natives",
+  "vtable_dispatch",
+  "dlopen_plugin_entry",
+  "internal_call_chain",
+  "unreferenced_export",
+  "unreferenced_internal",
+]);
+
+export type Stage15LinkageEdgeKind = z.infer<
+  typeof stage15LinkageEdgeKindSchema
+>;
+
+export const stage15NodeReachabilitySchema = z
+  .object({
+    classification: z.enum([
+      "class_i_live_wired",
+      "class_ii_dead_fossil",
+      "class_ii_cloned_inline_suspect",
+    ]),
+    intra_binary_caller_count: z.number().int().nonnegative(),
+    is_exported_global_default: z.boolean(),
+    linkage_edges: z.array(stage15LinkageEdgeKindSchema),
+    remediation_action: z.string().min(1),
+  })
+  .strict();
+
+export type Stage15NodeReachability = z.infer<
+  typeof stage15NodeReachabilitySchema
+>;
+
+export const linkerHygieneSummarySchema = z
+  .object({
+    defined_dynsym_functions: z.number().int().nonnegative(),
+    global_default_functions: z.number().int().nonnegative(),
+    global_default_ratio: z.number().nonnegative(),
+    weak_functions: z.number().int().nonnegative(),
+    intra_binary_plt_stubs: z.number().int().nonnegative(),
+    relr_relocations_decoded: z.number().int().nonnegative(),
+    jni_registered_methods_recovered: z.number().int().nonnegative(),
+    dlopen_targets: z.array(z.string()),
+    filtered_cpp_linker_traps: z.number().int().nonnegative(),
+    fvisibility_hidden_likely_omitted: z.boolean(),
+  })
+  .strict();
+
+export type LinkerHygieneSummary = z.infer<typeof linkerHygieneSummarySchema>;
 
 export const subgraphStringRefSchema = z
   .object({
@@ -187,8 +241,9 @@ export const subgraphNodeDossierSchema = z
       .array(latentBinaryHazardSchema)
       .default([])
       .describe(
-        "Static binary bug and undefined-behavior hazards uncovered in this procedure (unchecked division, 32-bit overflow before pointer indexing, mutable globals, unsafe sinks, stack hazards).",
+        "Static binary bug and undefined-behavior hazards uncovered in this procedure (unchecked division, 32-bit overflow before pointer indexing, mutable globals, unsafe sinks, stack hazards, writeback offset clobbers, pre-check null derefs, size truncation/underflow, and unpopulated out-params/duplicate calls).",
       ),
+    stage15_reachability: stage15NodeReachabilitySchema.optional(),
   })
   .strict();
 
@@ -247,6 +302,7 @@ export const nativeSubgraphSchema = z
     nodes: z.array(subgraphNodeDossierSchema),
     edges: z.array(subgraphEdgeSchema),
     aggregated_strings: z.array(aggregatedSubgraphStringSchema),
+    linker_hygiene: linkerHygieneSummarySchema.optional(),
     limitations: z.array(z.string()),
   })
   .strict();

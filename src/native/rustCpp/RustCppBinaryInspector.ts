@@ -22,6 +22,7 @@ import {
   type RustCppBinaryReport,
   type RustCrateDependency,
   type RustPanicLocation,
+  type RustZeroDriftAudit,
 } from "../../domain/rustCpp/rustCppBinary.js";
 
 const OPERATION = "inspect_rust_cpp_binary";
@@ -1026,6 +1027,54 @@ function isPrintableRustPath(str: string): boolean {
   return /[a-zA-Z0-9_./\\-]/.test(str);
 }
 
+const RUST_PANIC_HANDLER_PATTERNS = [
+  "panic_bounds_check",
+  "unwrap_failed",
+  "slice_index_fail",
+  "panic_nounwind",
+  "rust_begin_unwind",
+  "panic_const_",
+] as const;
+
+const UNSAFE_C_MEMORY_SINKS: ReadonlySet<string> = new Set([
+  "strcpy",
+  "strcat",
+  "sprintf",
+  "vsprintf",
+  "gets",
+  "scanf",
+  "__isoc99_scanf",
+  "system",
+  "popen",
+]);
+
+function isStdOrCorePanicPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  return (
+    normalized.startsWith("/rustc/") ||
+    normalized.startsWith("library/core/") ||
+    normalized.startsWith("library/std/") ||
+    normalized.startsWith("library/alloc/") ||
+    normalized.includes("/library/core/") ||
+    normalized.includes("/library/std/") ||
+    normalized.includes("/library/alloc/")
+  );
+}
+
+function normalizeUnsafeCSinkSymbol(symbolName: string): string | null {
+  const withoutVersion = symbolName.replace(/@.*$/, "");
+  if (UNSAFE_C_MEMORY_SINKS.has(withoutVersion)) {
+    return withoutVersion;
+  }
+  const withoutLeadingUnderscore = withoutVersion.startsWith("_")
+    ? withoutVersion.slice(1)
+    : withoutVersion;
+  if (UNSAFE_C_MEMORY_SINKS.has(withoutLeadingUnderscore)) {
+    return withoutLeadingUnderscore;
+  }
+  return null;
+}
+
 function scanRustForensics(
   container: ParsedContainer,
   maxPanicLocations: number,
@@ -1148,8 +1197,10 @@ function scanRustForensics(
     }
   }
 
-  // Demangle Rust symbols
+  // Demangle Rust symbols and audit panic handlers / unsafe C memory sinks
   const demangledSymbols: DemangledSymbolRecord[] = [];
+  const detectedPanicHandlers = new Set<string>();
+  const unsafeCMemorySinks = new Set<string>();
   let hasRustMarkerSymbol = false;
   for (const sym of container.symbols) {
     if (
@@ -1158,6 +1209,18 @@ function scanRustForensics(
       sym.name.includes("rust_eh_personality")
     ) {
       hasRustMarkerSymbol = true;
+    }
+    const cleanSymName = sym.name.replace(/@.*$/, "");
+    if (
+      RUST_PANIC_HANDLER_PATTERNS.some((pattern) =>
+        cleanSymName.includes(pattern),
+      )
+    ) {
+      detectedPanicHandlers.add(cleanSymName);
+    }
+    const unsafeSink = normalizeUnsafeCSinkSymbol(sym.name);
+    if (unsafeSink !== null) {
+      unsafeCMemorySinks.add(unsafeSink);
     }
     if (demangledSymbols.length >= maxSymbols) continue;
     const dem = demangleSymbol(sym.name);
@@ -1173,6 +1236,20 @@ function scanRustForensics(
       });
     }
   }
+
+  let stdOrCorePanicLocations = 0;
+  for (const loc of panicLocations) {
+    if (isStdOrCorePanicPath(loc.file)) {
+      stdOrCorePanicLocations++;
+    }
+  }
+  const zeroDriftAudit: RustZeroDriftAudit = {
+    total_panic_locations: panicLocations.length,
+    std_or_core_panic_locations: stdOrCorePanicLocations,
+    crate_panic_locations: panicLocations.length - stdOrCorePanicLocations,
+    detected_panic_handlers: [...detectedPanicHandlers].sort(),
+    unsafe_c_memory_sinks_imported: [...unsafeCMemorySinks].sort(),
+  };
 
   const crates: RustCrateDependency[] = [];
   for (const [key, val] of crateMap.entries()) {
@@ -1201,6 +1278,7 @@ function scanRustForensics(
     recovered_source_files: [...sourceFiles].sort(),
     panic_locations: panicLocations,
     demangled_symbols: demangledSymbols,
+    zero_drift_audit: zeroDriftAudit,
   };
 }
 
