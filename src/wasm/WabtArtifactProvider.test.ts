@@ -21,9 +21,13 @@ const failureTags: Readonly<Record<string, string>> = {
 };
 
 it("returns actionable unavailable without creating a workspace when tools are absent", async () => {
-  const provider = new WabtArtifactProvider({}, undefined, () => {
-    throw new Error("Must not allocate");
-  });
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: "/nonexistent-wabt-bin-directory" },
+    undefined,
+    () => {
+      throw new Error("Must not allocate");
+    },
+  );
   expect(
     await provider.inspect({
       path: "/module.wasm",
@@ -35,6 +39,41 @@ it("returns actionable unavailable without creating a workspace when tools are a
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
       userMessage: expect.stringContaining("REA_WABT_BIN_DIRECTORY"),
+    },
+  });
+});
+
+it("inspects a minimal valid WASM module via built-in zero-install parser when REA_WABT_BIN_DIRECTORY is unset without creating a workspace", async () => {
+  const root = await createTestTempDirectory("rea-wabt-zero-install-");
+  const path = join(root, "minimal.wasm");
+  await writeFile(
+    path,
+    Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
+  );
+  const provider = new WabtArtifactProvider({}, undefined, () => {
+    throw new Error("Must not allocate");
+  });
+  expect(
+    await provider.inspect({
+      path,
+      glue_paths: [],
+      candidate_paths: [],
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      result: {
+        artifact: { path, bytes: 8 },
+        validation: "valid",
+        sections: [],
+        headers: expect.stringContaining("file format wasm 0x1"),
+        wat: {
+          text: "(module)\n",
+          representation: "decoded-wat",
+        },
+        runtime_execution: "not-performed",
+        network_fetch: "not-performed",
+      },
     },
   });
 });

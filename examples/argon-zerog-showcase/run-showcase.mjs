@@ -161,6 +161,8 @@ function buildExecutiveScorecardHtml({
   subgraphEdgesCount,
   totalLatentHazards,
   allHazards,
+  stage15Counts,
+  linkerHygieneSummaryText,
   buggyReport,
   buggyWallMs,
   healedReport,
@@ -341,10 +343,10 @@ function buildExecutiveScorecardHtml({
       </div>
 
       <div class="kpi-card bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
-        <div class="kpi-label text-[var(--muted-foreground)] text-xs">✅ Memory Safety</div>
+        <div class="kpi-label text-[var(--muted-foreground)] text-xs">✅ Memory Safety &amp; Stage 1.5</div>
         <div class="kpi-value kpi-cyan text-[var(--accent)]">0 Unsafe</div>
         <div class="kpi-sub text-[var(--muted-foreground)]">
-          <code>#![forbid(unsafe_code)]</code> enforced at compile time • Eliminated <strong>${totalLatentHazards}</strong> legacy binary hazard(s)
+          <code>#![forbid(unsafe_code)]</code> • Eliminated <strong>${totalLatentHazards}</strong> legacy hazard(s) • Stage 1.5: <strong>${stage15Counts.class_i_live_wired}</strong> live / <strong>${stage15Counts.class_ii_dead_fossil}</strong> fossil / <strong>${stage15Counts.class_ii_cloned_inline_suspect}</strong> suspect
         </div>
       </div>
 
@@ -352,7 +354,7 @@ function buildExecutiveScorecardHtml({
         <div class="kpi-label text-[var(--muted-foreground)] text-xs">🎯 Output Replication</div>
         <div class="kpi-value kpi-purple text-[var(--accent)]">100.0%</div>
         <div class="kpi-sub text-[var(--muted-foreground)]">
-          <code>${totalVerifiedSeeds.toLocaleString()} / ${totalVerifiedSeeds.toLocaleString()}</code> deterministic boundary + SplitMix64 FFI seeds matched bit-exact
+          <code>${healedReport.iterations_completed.toLocaleString()}</code> SplitMix64 + <code>${healedReport.boundary_cases_tested.toLocaleString()}</code> boundary (<code>${totalVerifiedSeeds.toLocaleString()} / ${totalVerifiedSeeds.toLocaleString()}</code>) FFI seeds matched bit-exact
         </div>
       </div>
 
@@ -392,8 +394,19 @@ function buildExecutiveScorecardHtml({
           <tr>
             <td><strong>Procedures &amp; Call Edges</strong></td>
             <td>4 procedures (manual stitch across 18 turns)</td>
-            <td><code>${recoveredNames.join(" → ")}</code> (${subgraphEdgesCount} typed edges)</td>
+            <td><code>${recoveredNames.map(escapeHtml).join(" → ")}</code> (${subgraphEdgesCount} typed edges)</td>
             <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">100% single-shot topology</span></td>
+          </tr>
+          <tr>
+            <td><strong>Stage 1.5 Reachability &amp; Linker Hygiene</strong></td>
+            <td><code>0</code> (no reachability or ELF linker audit)</td>
+            <td>
+              <code>${stage15Counts.class_i_live_wired}</code> <code>class_i_live_wired</code>,
+              <code>${stage15Counts.class_ii_dead_fossil}</code> <code>class_ii_dead_fossil</code>,
+              <code>${stage15Counts.class_ii_cloned_inline_suspect}</code> <code>class_ii_cloned_inline_suspect</code><br/>
+              <span class="kpi-sub">${escapeHtml(linkerHygieneSummaryText)}</span>
+            </td>
+            <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">Automated Stage 1.5 &amp; visibility audit</span></td>
           </tr>
           <tr>
             <td><strong>Wire Payload &amp; Context Caching</strong></td>
@@ -451,7 +464,7 @@ function buildExecutiveScorecardHtml({
             <td><span class="badge badge-ok bg-[var(--primary)] text-[var(--primary-foreground)] text-xs">${escapeHtml(healedReport.status)}</span></td>
             <td><code>${escapeHtml(healedReport.sandbox_telemetry.isolation_backend)}</code><br/><code>#![forbid(unsafe_code)]</code> (0 unsafe blocks)</td>
             <td>
-              <strong><code>${totalVerifiedSeeds.toLocaleString()} / ${totalVerifiedSeeds.toLocaleString()}</code></strong> FFI inputs verified bit-exact (${healedWallMs} ms)<br/>
+              <strong><code>${healedReport.iterations_completed.toLocaleString()}</code></strong> SplitMix64 + <strong><code>${healedReport.boundary_cases_tested.toLocaleString()}</code></strong> boundary (<code>${totalVerifiedSeeds.toLocaleString()} / ${totalVerifiedSeeds.toLocaleString()}</code>) FFI inputs verified bit-exact (${healedWallMs} ms)<br/>
               In-process 100k-call benchmark: <strong><code>${bench.speedup_vs_c_oracle.toFixed(2)}x</code> speedup</strong> over C shared library (<code>${bench.c_oracle_ns_per_call} ns</code> → <code>${bench.safe_rust_ns_per_call} ns</code>)
             </td>
           </tr>
@@ -608,6 +621,36 @@ async function runShowcase() {
         ...h,
       })),
     );
+    const stage15Counts = {
+      class_i_live_wired: 0,
+      class_ii_dead_fossil: 0,
+      class_ii_cloned_inline_suspect: 0,
+    };
+    for (const node of subgraphData.nodes ?? []) {
+      const classification = node.stage15_reachability?.classification;
+      if (
+        classification &&
+        Object.prototype.hasOwnProperty.call(stage15Counts, classification)
+      ) {
+        stage15Counts[classification] += 1;
+      }
+    }
+    const linkerHygiene = subgraphData.linker_hygiene ?? null;
+    const linkerHygieneSummaryText = linkerHygiene
+      ? [
+          `dynsym=${linkerHygiene.defined_dynsym_functions}`,
+          `global_default=${linkerHygiene.global_default_functions} (${(linkerHygiene.global_default_ratio * 100).toFixed(1)}%)`,
+          `weak=${linkerHygiene.weak_functions}`,
+          `plt_stubs=${linkerHygiene.intra_binary_plt_stubs}`,
+          `relr=${linkerHygiene.relr_relocations_decoded}`,
+          `jni=${linkerHygiene.jni_registered_methods_recovered}`,
+          `traps_filtered=${linkerHygiene.filtered_cpp_linker_traps}`,
+          linkerHygiene.dlopen_targets.length > 0
+            ? `dlopen=${linkerHygiene.dlopen_targets.length} (${linkerHygiene.dlopen_targets.join(", ")})`
+            : "dlopen=0",
+          `fvisibility_hidden_omitted=${linkerHygiene.fvisibility_hidden_likely_omitted}`,
+        ].join(", ")
+      : "unavailable";
 
     // =========================================================================
     // Step 4: Closed-Loop Self-Healing Rust Reconstruction (`verify_rust_parity`)
@@ -698,6 +741,8 @@ async function runShowcase() {
         subgraph_edges_recovered: (subgraphData.edges ?? []).length,
         total_latent_hazards: totalLatentHazards,
         latent_hazards: allHazards,
+        stage15_reachability: stage15Counts,
+        linker_hygiene: linkerHygiene,
       },
       comparison: {
         legacy_workflow: {
@@ -753,6 +798,7 @@ Target Call Graph (4-function compiled C shared object \`libargon_showcase.${ext
 | **Connected Procedures Recovered** | \`4\` (across 18 turns) | \`${recoveredNames.length}\` (\`${recoveredNames.join(", ")}\`) | **100% single-shot graph recovery** |
 | **Call Edges Recovered** | Manual stitch required | \`${(subgraphData.edges ?? []).length}\` typed call edges | **Zero manual stitching** |
 | **Latent Binary Hazards Detected** | \`0\` (manual audit required) | \`${totalLatentHazards}\` hazard(s) (\`${allHazards.map((h) => h.category).join(", ")}\`) | **Automated UB & thread-safety audit** |
+| **Stage 1.5 Reachability & Linker Hygiene** | \`0\` (no reachability or ELF linker audit) | \`${stage15Counts.class_i_live_wired}\` \`class_i_live_wired\`, \`${stage15Counts.class_ii_dead_fossil}\` \`class_ii_dead_fossil\`, \`${stage15Counts.class_ii_cloned_inline_suspect}\` \`class_ii_cloned_inline_suspect\` (\`${linkerHygieneSummaryText}\`) | **Automated Stage 1.5 & visibility audit** |
 | **Serialized Wire Payload** | \`${legacyWireBytes} B\` | \`${subgraphWireBytes} B\` | **1 contiguous context-cacheable block** |
 
 ---
@@ -779,6 +825,8 @@ Target Call Graph (4-function compiled C shared object \`libargon_showcase.${ext
       subgraphEdgesCount: (subgraphData.edges ?? []).length,
       totalLatentHazards,
       allHazards,
+      stage15Counts,
+      linkerHygieneSummaryText,
       buggyReport,
       buggyWallMs,
       healedReport,

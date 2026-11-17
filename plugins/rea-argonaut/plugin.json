@@ -1,7 +1,7 @@
 {
   "name": "rea-argonaut",
   "displayName": "REA-Argonaut (ArgonZeroG)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-G Reverse Engineering Anything & Sandboxed Closed-Loop Safe Rust Verifier for Gemini 4 Argon and Antigravity 2.0.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
