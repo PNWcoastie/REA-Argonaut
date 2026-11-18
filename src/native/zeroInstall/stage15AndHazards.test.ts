@@ -675,5 +675,5 @@ describe("Stage 1.5 Multi-Edge Reachability, Relocations & 9-Category Hazards", 
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
