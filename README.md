@@ -1,5 +1,9 @@
 # REA-Argonaut (ArgonZeroG)
 
+[![CI](https://github.com/PNWcoastie/REA-Argonaut/actions/workflows/ci.yml/badge.svg)](https://github.com/PNWcoastie/REA-Argonaut/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/PNWcoastie/REA-Argonaut)](https://github.com/PNWcoastie/REA-Argonaut/releases/latest)
+[![Glama MCP Score](https://glama.ai/mcp/servers/PNWcoastie/REA-Argonaut/badges/score.svg)](https://glama.ai/mcp/servers/PNWcoastie/REA-Argonaut)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 ![Status](https://img.shields.io/badge/Status-Active_Development-brightgreen)
 ![Last Commit](https://img.shields.io/github/last-commit/PNWcoastie/REA-Argonaut)
 
