@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.PNWcoastie/rea-argonaut",
+  "title": "REA-Argonaut (ArgonZeroG)",
+  "description": "Zero-G reverse engineering MCP server & sandboxed Safe Rust parity verifier across native binaries.",
+  "version": "1.1.0",
+  "repository": {
+    "url": "https://github.com/PNWcoastie/REA-Argonaut",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "rea-argonaut",
+      "version": "1.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

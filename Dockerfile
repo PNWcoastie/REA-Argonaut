@@ -1,4 +1,14 @@
-FROM node:22-slim
+FROM node:24-slim AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+COPY src ./src
+RUN npm run build
+
+FROM node:24-slim AS runner
 
 # Install Python 3 and GNU binutils for Tier-2 Zero-Install binary inspection
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,10 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
-RUN npm ci --ignore-scripts
+ENV NODE_ENV=production
+ENV MCP_TOOL_RESULT_CONTENT_MODE=text-only
+ENV REA_LOG_LEVEL=error
 
-COPY src ./src
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+
+COPY --from=builder /app/dist ./dist
 COPY bridge ./bridge
 COPY scripts ./scripts
 COPY native ./native
@@ -20,10 +34,5 @@ COPY third_party ./third_party
 COPY plugin.json ./plugin.json
 COPY plugins ./plugins
 COPY assets ./assets
-
-RUN npm run build && npm prune --omit=dev
-
-ENV NODE_ENV=production
-ENV MCP_TOOL_RESULT_CONTENT_MODE=text-only
 
 ENTRYPOINT ["node", "dist/main.js"]
