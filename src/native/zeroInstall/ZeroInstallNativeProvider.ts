@@ -298,6 +298,9 @@ function findExecutableInPath(
   names: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
 ): string | null {
+  if ("PATH" in environment && (environment.PATH ?? "").trim().length === 0) {
+    return null;
+  }
   const pathStr = environment.PATH ?? process.env.PATH ?? "";
   const dirs = [
     ...pathStr
