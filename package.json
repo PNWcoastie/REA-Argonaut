@@ -1,16 +1,16 @@
 {
   "name": "rea-argonaut",
-  "mcpName": "io.github.morluto/rea-argonaut",
+  "mcpName": "io.github.PNWcoastie/rea-argonaut",
   "version": "1.1.0",
   "description": "Zero-G Reverse Engineering & Verified Rust Reconstruction for Gemini 4 Argon + Antigravity",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/morluto/rea.git"
+    "url": "git+https://github.com/PNWcoastie/REA-Argonaut.git"
   },
-  "homepage": "https://github.com/morluto/rea#readme",
+  "homepage": "https://github.com/PNWcoastie/REA-Argonaut#readme",
   "bugs": {
-    "url": "https://github.com/morluto/rea/issues"
+    "url": "https://github.com/PNWcoastie/REA-Argonaut/issues"
   },
   "keywords": [
     "reverse-engineering",
